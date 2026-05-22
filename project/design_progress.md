@@ -202,13 +202,145 @@ API Layer                 Repository Layer (DB 접근)
 
 ---
 
+## 3단계: 프론트엔드 구조 설계
+
+### 폴더 구조
+
+```
+src/
+├── api/              ← 서버 통신 함수만 모음
+│   ├── machines.ts   ← REST API 호출
+│   └── websocket.ts  ← WebSocket 연결 관리
+│
+├── components/       ← 재사용 가능한 UI 조각
+│   ├── common/       ← 버튼, 카드 등 범용
+│   └── machine/      ← 세탁기 전용 컴포넌트
+│
+├── pages/            ← 라우트 1개 = 파일 1개
+│   ├── LoginPage.tsx
+│   └── DashboardPage.tsx
+│
+├── hooks/            ← 커스텀 훅
+│   ├── useWebSocket.ts
+│   └── useMachines.ts
+│
+├── store/            ← 전역 상태
+│   ├── authStore.ts
+│   └── machineStore.ts
+│
+└── types/            ← TypeScript 타입 정의 전용
+    ├── machine.ts
+    └── user.ts
+```
+
+### 라우팅 전략
+
+```
+/           → LoginPage    (비로그인 시 리디렉션 대상)
+/dashboard  → DashboardPage (메인 화면, 로그인 필요)
+/admin      → AdminPage    (role=admin 필요, 나중에 추가)
+```
+
+| 항목 | 선택 | 이유 |
+|------|------|------|
+| 라우팅 라이브러리 | **React Router v6** | 사실상 표준, 문서 풍부 |
+| 보호 라우트 | `<ProtectedRoute>` 컴포넌트 | 인증 로직을 라우터에서 분리 |
+
+### 상태 관리 선택
+
+| 방식 | 장점 | 단점 | 결론 |
+|------|------|------|------|
+| Context + useReducer | 라이브러리 없음 | 보일러플레이트 많음, 리렌더 최적화 어려움 | 탈락 |
+| Redux Toolkit | 강력함 | 초보자에게 과도함, 설정 복잡 | 탈락 |
+| **Zustand** | 코드 단순, TypeScript 친화적, 보일러플레이트 최소 | 외부 라이브러리 | **채택** |
+
+### TypeScript 핵심 타입 설계
+
+```typescript
+// src/types/machine.ts
+
+export type MachineMode = 'A' | 'B' | 'C'
+
+export interface Machine {
+  id: number
+  floor: number
+  status: 'available' | 'in_use' | 'soft_reserved' | 'broken'
+  genderRestriction: 'male' | 'female' | null  // null = 공용
+}
+
+export interface FloorInfo {
+  floor: number
+  availableCount: number       // Mode A용
+  hasAvailable: boolean        // Mode B/C용
+}
+
+export interface DashboardState {
+  mode: MachineMode
+  floors: FloorInfo[]
+  myReservation: Machine | null
+  queuePosition: number | null
+}
+```
+
+### 컴포넌트 트리
+
+```
+DashboardPage
+├── ModeBanner          ← "현재 모드 A/B/C" 안내 문구
+├── FloorList
+│   └── FloorCard (층마다 1개)
+│       ├── [MODE A] → <MachineCount count={n} />
+│       ├── [MODE B] → <ReserveButton />
+│       └── [MODE C] → <QueueButton position={n} />
+└── MyStatusPanel       ← 내 예약 상태 / 대기 순서 표시
+```
+
+> 핵심 설계 원칙: FloorCard는 모드를 모릅니다.
+> 부모(DashboardPage)가 모드를 판단해서 올바른 자식 컴포넌트를 선택합니다.
+
+### WebSocket 이벤트 설계
+
+```
+서버 → 클라이언트:
+  { type: 'MODE_CHANGE',   payload: { mode: 'B' } }
+  { type: 'FLOOR_UPDATE',  payload: { floor: 3, count: 2 } }
+  { type: 'MY_ASSIGNMENT', payload: { machine: { floor: 2, id: 7 } } }
+  { type: 'QUEUE_UPDATE',  payload: { position: 2 } }
+
+클라이언트 → 서버:
+  { type: 'REQUEST_MACHINE' }   ← "사용하시겠습니까?" 버튼
+  { type: 'JOIN_QUEUE' }        ← Mode C 대기열 등록
+```
+
+### 프론트 내 개발 순서
+
+```
+1. 타입 정의 (types/)
+2. 더미 데이터로 3가지 모드 UI 렌더링
+3. Zustand store 연결
+4. REST API 연결
+5. WebSocket 연결
+6. 로그인 페이지 + 라우팅
+```
+
+### 흔한 실수
+
+| 실수 | 결과 | 해결 |
+|------|------|------|
+| 모드 분기를 컴포넌트 안에서 if/else | 컴포넌트 비대화, 테스트 어려움 | 부모에서 분기, 자식은 역할만 |
+| WebSocket을 컴포넌트에서 직접 연결 | 중복 연결, 메모리 누수 | 커스텀 훅으로 분리 |
+| API 응답을 타입 없이 사용 | any 지옥, 런타임 에러 | types/에 정의 후 import |
+| 하드코딩 `gender: 'male'` | 테스트 후 수정 누락 | 항상 store에서 읽기 |
+
+---
+
 ## 진행 현황
 
 | 단계 | 내용 | 상태 |
 |------|------|------|
 | 1단계 | 서비스 정의 | ✅ 완료 |
 | 2단계 | 전체 시스템 아키텍처 | ✅ 완료 (승인 대기) |
-| 3단계 | 프론트엔드 구조 설계 | ⏳ 대기 |
+| 3단계 | 프론트엔드 구조 설계 | ✅ 완료 (승인 대기) |
 | 4단계 | 백엔드 구조 설계 | ⏳ 대기 |
 | 5단계 | DB 및 데이터 흐름 설계 | ⏳ 대기 |
 | 6단계 | Docker 환경 구성 | ⏳ 대기 |
