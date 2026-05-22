@@ -118,7 +118,6 @@ soft_reserve(machine_id, user_id, duration=10min)
         │
         └── (더미데이터 레이어) ← IoT 연결 전까지
 
-
 [GitHub Actions] → [Railway] ← 배포
 ```
 
@@ -179,19 +178,6 @@ API Layer                 Repository Layer (DB 접근)
       └── 전체 연결된 클라이언트에 broadcast
 ```
 
-### 개발 우선순위
-
-```
-1. DB 모델 + 더미 데이터 시드
-2. 세탁기 상태 API (REST)
-3. Mode A/B/C 판별 로직 (Service Layer)
-4. WebSocket 연결 + broadcast
-5. React UI (3가지 모드 렌더링)
-6. 대기열 API + 타이머 로직
-7. JWT 인증
-8. Docker + Railway 배포
-```
-
 ### 흔한 실수
 
 | 실수 | 결과 | 해결 |
@@ -208,70 +194,38 @@ API Layer                 Repository Layer (DB 접근)
 
 ```
 src/
-├── api/              ← 서버 통신 함수만 모음
-│   ├── machines.ts   ← REST API 호출
-│   └── websocket.ts  ← WebSocket 연결 관리
-│
-├── components/       ← 재사용 가능한 UI 조각
-│   ├── common/       ← 버튼, 카드 등 범용
-│   └── machine/      ← 세탁기 전용 컴포넌트
-│
-├── pages/            ← 라우트 1개 = 파일 1개
+├── api/
+│   ├── machines.ts
+│   └── websocket.ts
+├── components/
+│   ├── common/
+│   └── machine/
+├── pages/
 │   ├── LoginPage.tsx
 │   └── DashboardPage.tsx
-│
-├── hooks/            ← 커스텀 훅
+├── hooks/
 │   ├── useWebSocket.ts
 │   └── useMachines.ts
-│
-├── store/            ← 전역 상태
+├── store/
 │   ├── authStore.ts
 │   └── machineStore.ts
-│
-└── types/            ← TypeScript 타입 정의 전용
+└── types/
     ├── machine.ts
     └── user.ts
 ```
 
-### 라우팅 전략
+### 상태 관리: Zustand 채택
 
-```
-/           → LoginPage    (비로그인 시 리디렉션 대상)
-/dashboard  → DashboardPage (메인 화면, 로그인 필요)
-/admin      → AdminPage    (role=admin 필요, 나중에 추가)
-```
-
-| 항목 | 선택 | 이유 |
-|------|------|------|
-| 라우팅 라이브러리 | **React Router v6** | 사실상 표준, 문서 풍부 |
-| 보호 라우트 | `<ProtectedRoute>` 컴포넌트 | 인증 로직을 라우터에서 분리 |
-
-### 상태 관리 선택
-
-| 방식 | 장점 | 단점 | 결론 |
-|------|------|------|------|
-| Context + useReducer | 라이브러리 없음 | 보일러플레이트 많음, 리렌더 최적화 어려움 | 탈락 |
-| Redux Toolkit | 강력함 | 초보자에게 과도함, 설정 복잡 | 탈락 |
-| **Zustand** | 코드 단순, TypeScript 친화적, 보일러플레이트 최소 | 외부 라이브러리 | **채택** |
-
-### TypeScript 핵심 타입 설계
+### TypeScript 핵심 타입
 
 ```typescript
-// src/types/machine.ts
-
 export type MachineMode = 'A' | 'B' | 'C'
 
 export interface Machine {
   id: number
   floor: number
   status: 'available' | 'in_use' | 'soft_reserved' | 'broken'
-  genderRestriction: 'male' | 'female' | null  // null = 공용
-}
-
-export interface FloorInfo {
-  floor: number
-  availableCount: number       // Mode A용
-  hasAvailable: boolean        // Mode B/C용
+  genderRestriction: 'male' | 'female' | null
 }
 
 export interface DashboardState {
@@ -286,19 +240,16 @@ export interface DashboardState {
 
 ```
 DashboardPage
-├── ModeBanner          ← "현재 모드 A/B/C" 안내 문구
+├── ModeBanner
 ├── FloorList
-│   └── FloorCard (층마다 1개)
-│       ├── [MODE A] → <MachineCount count={n} />
+│   └── FloorCard
+│       ├── [MODE A] → <MachineCount />
 │       ├── [MODE B] → <ReserveButton />
-│       └── [MODE C] → <QueueButton position={n} />
-└── MyStatusPanel       ← 내 예약 상태 / 대기 순서 표시
+│       └── [MODE C] → <QueueButton />
+└── MyStatusPanel
 ```
 
-> 핵심 설계 원칙: FloorCard는 모드를 모릅니다.
-> 부모(DashboardPage)가 모드를 판단해서 올바른 자식 컴포넌트를 선택합니다.
-
-### WebSocket 이벤트 설계
+### WebSocket 이벤트
 
 ```
 서버 → 클라이언트:
@@ -308,29 +259,150 @@ DashboardPage
   { type: 'QUEUE_UPDATE',  payload: { position: 2 } }
 
 클라이언트 → 서버:
-  { type: 'REQUEST_MACHINE' }   ← "사용하시겠습니까?" 버튼
-  { type: 'JOIN_QUEUE' }        ← Mode C 대기열 등록
+  { type: 'REQUEST_MACHINE' }
+  { type: 'JOIN_QUEUE' }
 ```
 
-### 프론트 내 개발 순서
+### 흔한 실수
+
+| 실수 | 해결 |
+|------|------|
+| 모드 분기를 컴포넌트 안에서 처리 | 부모에서 분기, 자식은 역할만 |
+| WebSocket을 컴포넌트에서 직접 연결 | 커스텀 훅으로 분리 |
+| API 응답을 타입 없이 사용 | types/에 정의 후 import |
+
+---
+
+## 4단계: 백엔드 구조 설계
+
+### 폴더 구조
 
 ```
-1. 타입 정의 (types/)
-2. 더미 데이터로 3가지 모드 UI 렌더링
-3. Zustand store 연결
-4. REST API 연결
-5. WebSocket 연결
-6. 로그인 페이지 + 라우팅
+backend/
+├── main.py              ← FastAPI 앱 생성, 라우터 등록
+├── config.py            ← 환경변수 로딩 (DB URL, JWT 키 등)
+│
+├── api/                 ← Router Layer: 요청 받는 창구
+│   ├── auth.py          ← POST /auth/login, /auth/register
+│   ├── machines.py      ← GET /machines, POST /machines/request
+│   ├── queue.py         ← POST /queue/join, DELETE /queue/leave
+│   └── ws.py            ← WebSocket /ws
+│
+├── services/            ← Service Layer: 비즈니스 로직
+│   ├── machine_service.py   ← Mode 계산, soft_reserve 로직
+│   ├── queue_service.py     ← 대기열 관리, 타이머 처리
+│   └── auth_service.py      ← 토큰 생성/검증
+│
+├── repositories/        ← Repository Layer: DB 접근만 담당
+│   ├── machine_repo.py
+│   ├── queue_repo.py
+│   └── user_repo.py
+│
+├── models/              ← SQLAlchemy: DB 테이블 정의
+│   ├── user.py
+│   ├── machine.py
+│   └── queue_entry.py
+│
+├── schemas/             ← Pydantic: API 요청/응답 타입
+│   ├── machine.py
+│   └── user.py
+│
+└── core/                ← 공통 인프라
+    ├── database.py      ← DB 연결 설정
+    ├── security.py      ← JWT 유틸
+    └── dependencies.py  ← FastAPI Depends
+```
+
+### models vs schemas — 왜 둘 다 있나요?
+
+| | `models/` | `schemas/` |
+|---|---|---|
+| 역할 | DB 테이블 구조 정의 | API 요청/응답 구조 정의 |
+| 사용 기술 | SQLAlchemy | Pydantic |
+| 이유 | `password_hash`는 DB엔 있어도 응답엔 없어야 함 |
+
+### API 엔드포인트 설계
+
+| Method | Path | 설명 | 인증 |
+|--------|------|------|------|
+| POST | `/auth/register` | 회원가입 (gender 포함) | 불필요 |
+| POST | `/auth/login` | 로그인 → JWT 반환 | 불필요 |
+| GET | `/machines` | 현재 모드 + 층별 상태 반환 | 필요 |
+| POST | `/machines/request` | Mode B: 세탁기 1대 배정 요청 | 필요 |
+| POST | `/queue/join` | Mode C: 대기열 등록 | 필요 |
+| DELETE | `/queue/leave` | 대기열 취소 | 필요 |
+| WS | `/ws` | 실시간 연결 | JWT 쿼리 파라미터 |
+
+> WebSocket은 HTTP 헤더를 못 쓰는 경우가 많아 JWT를 URL 쿼리 파라미터로 전달합니다.
+> 예: `wss://api.example.com/ws?token=eyJ...`
+
+### JWT 설계
+
+```python
+{
+  "sub": "42",       # user_id
+  "gender": "male",  # 성별 — Mode 계산에 필수
+  "role": "user",    # 권한
+  "exp": 1700000000  # 만료 시간
+}
+```
+
+> gender를 토큰에 넣는 이유: 모든 요청마다 DB 조회 없이 바로 사용 가능.
+> 단, 민감 정보(비밀번호 등)는 절대 넣지 않습니다.
+
+### 계층 흐름 예시 (Mode B 버튼)
+
+```
+1. api/machines.py     → 요청 수신, JWT 검증
+2. services/           → mode 확인, 세탁기 선택, soft_reserve 호출
+3. repositories/       → DB 조회 및 status 업데이트
+4. services/           → 10분 타이머 등록 (BackgroundTask)
+5. api/machines.py     → 해당 유저에게만 위치 응답
+```
+
+### Mode 계산 로직
+
+```python
+def get_current_mode(gender: str, db) -> MachineMode:
+    available = machine_repo.count_available(gender, db)
+    if available >= 4:
+        return 'A'
+    elif available >= 1:
+        return 'B'
+    else:
+        return 'C'
+```
+
+> 이 함수는 백엔드에만 있습니다. 프론트는 서버가 반환한 `mode` 값으로 UI만 결정합니다.
+
+### 10분 타이머 처리
+
+| 방식 | 선택 | 이유 |
+|------|------|------|
+| **Lazy expiration** | **프로토타입** | 구현 단순 — GET 요청 시 만료 항목 자동 해제 |
+| APScheduler | 실서비스 | 정확한 시간 처리, 라이브러리 추가 필요 |
+
+### WebSocket 연결 관리
+
+```python
+class ConnectionManager:
+    def __init__(self):
+        self.male_connections: list[WebSocket] = []
+        self.female_connections: list[WebSocket] = []
+
+    async def broadcast_to_gender(self, gender: str, message: dict):
+        # gender 기반 채널 분리 → 타 성별에 정보 노출 방지
 ```
 
 ### 흔한 실수
 
 | 실수 | 결과 | 해결 |
 |------|------|------|
-| 모드 분기를 컴포넌트 안에서 if/else | 컴포넌트 비대화, 테스트 어려움 | 부모에서 분기, 자식은 역할만 |
-| WebSocket을 컴포넌트에서 직접 연결 | 중복 연결, 메모리 누수 | 커스텀 훅으로 분리 |
-| API 응답을 타입 없이 사용 | any 지옥, 런타임 에러 | types/에 정의 후 import |
-| 하드코딩 `gender: 'male'` | 테스트 후 수정 누락 | 항상 store에서 읽기 |
+| 비즈니스 로직을 `api/`에 작성 | 라우터 비대화 | `services/`로 분리 |
+| DB 쿼리를 `services/`에 직접 작성 | 계층 붕괴 | `repositories/`로 분리 |
+| models와 schemas를 동일하게 사용 | 민감 정보 노출 | 반드시 분리 |
+| JWT에 비밀번호 저장 | 심각한 보안 취약점 | 절대 금지 |
+| WebSocket 단일 채널 broadcast | 타 성별 정보 노출 | gender 기반 채널 분리 |
 
 ---
 
@@ -341,7 +413,7 @@ DashboardPage
 | 1단계 | 서비스 정의 | ✅ 완료 |
 | 2단계 | 전체 시스템 아키텍처 | ✅ 완료 (승인 대기) |
 | 3단계 | 프론트엔드 구조 설계 | ✅ 완료 (승인 대기) |
-| 4단계 | 백엔드 구조 설계 | ⏳ 대기 |
+| 4단계 | 백엔드 구조 설계 | ✅ 완료 (승인 대기) |
 | 5단계 | DB 및 데이터 흐름 설계 | ⏳ 대기 |
 | 6단계 | Docker 환경 구성 | ⏳ 대기 |
 | 7단계 | Railway 배포 전략 | ⏳ 대기 |
