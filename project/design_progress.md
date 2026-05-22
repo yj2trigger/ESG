@@ -131,60 +131,23 @@ soft_reserve(machine_id, user_id, duration=10min)
 | 인증 | **JWT** | Session | 무상태, 모바일 친화적 |
 | 더미 데이터 | **DB 시드 + 수동 토글** | 하드코딩 | IoT 연결 시 교체 용이 |
 
-### 알림 방식 비교
-
-| 방식 | 장점 | 단점 | 적용 시점 |
-|------|------|------|-----------|
-| WebSocket 인앱 알림 | 구현 단순, 별도 서버 불필요 | 앱 열고 있어야 함 | **프로토타입** |
-| PWA Push Notification | 백그라운드에서도 수신 가능 | HTTPS 필수, Service Worker 복잡 | 실서비스 확장 시 |
-
 ### 레이어 분리 전략
 
 ```
 Frontend                  Backend
 ─────────────────         ────────────────────────────
 View Layer                Router Layer (API 진입점)
-  └─ 3가지 모드 UI           └─ /machines, /auth, /queue
-
 State Layer               Service Layer (비즈니스 로직)
-  └─ 실시간 상태 관리          └─ Mode 판별, Queue 로직
-
 API Layer                 Repository Layer (DB 접근)
-  └─ WebSocket 연결           └─ SQLAlchemy ORM
-```
-
-> IoT 연결 방식이 바뀌어도 Repository Layer만 수정하면 됨.
-> Service Layer는 데이터 출처를 모름.
-
-### 데이터 구조 (개략)
-
-| 엔티티 | 핵심 필드 | 비고 |
-|--------|-----------|------|
-| `User` | id, gender, role | 성별로 모드 분기 |
-| `Machine` | id, floor, status, gender_restriction | 1~2층: null (공용) |
-| `QueueEntry` | user_id, floor, notified_at, expires_at | 10분 타이머 |
-
-### 실시간 흐름도
-
-```
-[세탁기 상태 변경]
-      │
-      ▼
-[Backend: 상태 업데이트]
-      │
-      ├── Mode 재계산 (A/B/C)
-      ├── 대기열 있으면 → 첫 번째 사용자에게 WebSocket 알림
-      │                    └── 10분 타이머 시작
-      └── 전체 연결된 클라이언트에 broadcast
 ```
 
 ### 흔한 실수
 
-| 실수 | 결과 | 해결 |
-|------|------|------|
-| Mode를 프론트에서만 계산 | 조작 가능, 성별 우회 | **백엔드에서 계산** |
-| WebSocket 하나로 전체 broadcast | 성별 정보 노출 | 연결 시 gender 기반 **채널 분리** |
-| 대기열을 메모리에 저장 | 서버 재시작 시 초기화 | **PostgreSQL에 저장** |
+| 실수 | 해결 |
+|------|------|
+| Mode를 프론트에서만 계산 | **백엔드에서 계산** |
+| WebSocket 하나로 전체 broadcast | gender 기반 **채널 분리** |
+| 대기열을 메모리에 저장 | **PostgreSQL에 저장** |
 
 ---
 
@@ -194,27 +157,13 @@ API Layer                 Repository Layer (DB 접근)
 
 ```
 src/
-├── api/
-│   ├── machines.ts
-│   └── websocket.ts
-├── components/
-│   ├── common/
-│   └── machine/
-├── pages/
-│   ├── LoginPage.tsx
-│   └── DashboardPage.tsx
-├── hooks/
-│   ├── useWebSocket.ts
-│   └── useMachines.ts
-├── store/
-│   ├── authStore.ts
-│   └── machineStore.ts
-└── types/
-    ├── machine.ts
-    └── user.ts
+├── api/          ← machines.ts, websocket.ts
+├── components/   ← common/, machine/
+├── pages/        ← LoginPage.tsx, DashboardPage.tsx
+├── hooks/        ← useWebSocket.ts, useMachines.ts
+├── store/        ← authStore.ts, machineStore.ts (Zustand)
+└── types/        ← machine.ts, user.ts
 ```
-
-### 상태 관리: Zustand 채택
 
 ### TypeScript 핵심 타입
 
@@ -222,17 +171,14 @@ src/
 export type MachineMode = 'A' | 'B' | 'C'
 
 export interface Machine {
-  id: number
-  floor: number
+  id: number; floor: number
   status: 'available' | 'in_use' | 'soft_reserved' | 'broken'
   genderRestriction: 'male' | 'female' | null
 }
 
 export interface DashboardState {
-  mode: MachineMode
-  floors: FloorInfo[]
-  myReservation: Machine | null
-  queuePosition: number | null
+  mode: MachineMode; floors: FloorInfo[]
+  myReservation: Machine | null; queuePosition: number | null
 }
 ```
 
@@ -241,35 +187,19 @@ export interface DashboardState {
 ```
 DashboardPage
 ├── ModeBanner
-├── FloorList
-│   └── FloorCard
-│       ├── [MODE A] → <MachineCount />
-│       ├── [MODE B] → <ReserveButton />
-│       └── [MODE C] → <QueueButton />
+├── FloorList → FloorCard
+│   ├── [A] <MachineCount />  ├── [B] <ReserveButton />  └── [C] <QueueButton />
 └── MyStatusPanel
 ```
+
+> FloorCard는 모드를 모릅니다. 부모가 모드 판단 후 올바른 자식 컴포넌트 선택.
 
 ### WebSocket 이벤트
 
 ```
-서버 → 클라이언트:
-  { type: 'MODE_CHANGE',   payload: { mode: 'B' } }
-  { type: 'FLOOR_UPDATE',  payload: { floor: 3, count: 2 } }
-  { type: 'MY_ASSIGNMENT', payload: { machine: { floor: 2, id: 7 } } }
-  { type: 'QUEUE_UPDATE',  payload: { position: 2 } }
-
-클라이언트 → 서버:
-  { type: 'REQUEST_MACHINE' }
-  { type: 'JOIN_QUEUE' }
+서버→클라이언트: MODE_CHANGE / FLOOR_UPDATE / MY_ASSIGNMENT / QUEUE_UPDATE
+클라이언트→서버: REQUEST_MACHINE / JOIN_QUEUE
 ```
-
-### 흔한 실수
-
-| 실수 | 해결 |
-|------|------|
-| 모드 분기를 컴포넌트 안에서 처리 | 부모에서 분기, 자식은 역할만 |
-| WebSocket을 컴포넌트에서 직접 연결 | 커스텀 훅으로 분리 |
-| API 응답을 타입 없이 사용 | types/에 정의 후 import |
 
 ---
 
@@ -279,130 +209,165 @@ DashboardPage
 
 ```
 backend/
-├── main.py              ← FastAPI 앱 생성, 라우터 등록
-├── config.py            ← 환경변수 로딩 (DB URL, JWT 키 등)
-│
-├── api/                 ← Router Layer: 요청 받는 창구
-│   ├── auth.py          ← POST /auth/login, /auth/register
-│   ├── machines.py      ← GET /machines, POST /machines/request
-│   ├── queue.py         ← POST /queue/join, DELETE /queue/leave
-│   └── ws.py            ← WebSocket /ws
-│
-├── services/            ← Service Layer: 비즈니스 로직
-│   ├── machine_service.py   ← Mode 계산, soft_reserve 로직
-│   ├── queue_service.py     ← 대기열 관리, 타이머 처리
-│   └── auth_service.py      ← 토큰 생성/검증
-│
-├── repositories/        ← Repository Layer: DB 접근만 담당
-│   ├── machine_repo.py
-│   ├── queue_repo.py
-│   └── user_repo.py
-│
-├── models/              ← SQLAlchemy: DB 테이블 정의
-│   ├── user.py
-│   ├── machine.py
-│   └── queue_entry.py
-│
-├── schemas/             ← Pydantic: API 요청/응답 타입
-│   ├── machine.py
-│   └── user.py
-│
-└── core/                ← 공통 인프라
-    ├── database.py      ← DB 연결 설정
-    ├── security.py      ← JWT 유틸
-    └── dependencies.py  ← FastAPI Depends
+├── main.py / config.py
+├── api/        ← auth.py, machines.py, queue.py, ws.py
+├── services/   ← machine_service.py, queue_service.py, auth_service.py
+├── repositories/ ← machine_repo.py, queue_repo.py, user_repo.py
+├── models/     ← SQLAlchemy: user.py, machine.py, queue_entry.py
+├── schemas/    ← Pydantic: machine.py, user.py
+└── core/       ← database.py, security.py, dependencies.py
 ```
 
-### models vs schemas — 왜 둘 다 있나요?
-
-| | `models/` | `schemas/` |
-|---|---|---|
-| 역할 | DB 테이블 구조 정의 | API 요청/응답 구조 정의 |
-| 사용 기술 | SQLAlchemy | Pydantic |
-| 이유 | `password_hash`는 DB엔 있어도 응답엔 없어야 함 |
-
-### API 엔드포인트 설계
+### API 엔드포인트
 
 | Method | Path | 설명 | 인증 |
 |--------|------|------|------|
 | POST | `/auth/register` | 회원가입 (gender 포함) | 불필요 |
 | POST | `/auth/login` | 로그인 → JWT 반환 | 불필요 |
-| GET | `/machines` | 현재 모드 + 층별 상태 반환 | 필요 |
-| POST | `/machines/request` | Mode B: 세탁기 1대 배정 요청 | 필요 |
+| GET | `/machines` | 현재 모드 + 층별 상태 | 필요 |
+| POST | `/machines/request` | Mode B: 세탁기 배정 | 필요 |
 | POST | `/queue/join` | Mode C: 대기열 등록 | 필요 |
 | DELETE | `/queue/leave` | 대기열 취소 | 필요 |
-| WS | `/ws` | 실시간 연결 | JWT 쿼리 파라미터 |
-
-> WebSocket은 HTTP 헤더를 못 쓰는 경우가 많아 JWT를 URL 쿼리 파라미터로 전달합니다.
-> 예: `wss://api.example.com/ws?token=eyJ...`
-
-### JWT 설계
-
-```python
-{
-  "sub": "42",       # user_id
-  "gender": "male",  # 성별 — Mode 계산에 필수
-  "role": "user",    # 권한
-  "exp": 1700000000  # 만료 시간
-}
-```
-
-> gender를 토큰에 넣는 이유: 모든 요청마다 DB 조회 없이 바로 사용 가능.
-> 단, 민감 정보(비밀번호 등)는 절대 넣지 않습니다.
-
-### 계층 흐름 예시 (Mode B 버튼)
-
-```
-1. api/machines.py     → 요청 수신, JWT 검증
-2. services/           → mode 확인, 세탁기 선택, soft_reserve 호출
-3. repositories/       → DB 조회 및 status 업데이트
-4. services/           → 10분 타이머 등록 (BackgroundTask)
-5. api/machines.py     → 해당 유저에게만 위치 응답
-```
+| WS | `/ws?token=...` | 실시간 연결 | JWT 쿼리 파라미터 |
 
 ### Mode 계산 로직
 
 ```python
 def get_current_mode(gender: str, db) -> MachineMode:
     available = machine_repo.count_available(gender, db)
-    if available >= 4:
-        return 'A'
-    elif available >= 1:
-        return 'B'
-    else:
-        return 'C'
+    if available >= 4: return 'A'
+    elif available >= 1: return 'B'
+    else: return 'C'
 ```
 
-> 이 함수는 백엔드에만 있습니다. 프론트는 서버가 반환한 `mode` 값으로 UI만 결정합니다.
+### 타이머: Lazy expiration (프로토타입)
 
-### 10분 타이머 처리
+GET 요청 시 `reserved_until < NOW()` 항목 자동 해제 후 반환.
 
-| 방식 | 선택 | 이유 |
-|------|------|------|
-| **Lazy expiration** | **프로토타입** | 구현 단순 — GET 요청 시 만료 항목 자동 해제 |
-| APScheduler | 실서비스 | 정확한 시간 처리, 라이브러리 추가 필요 |
-
-### WebSocket 연결 관리
+### WebSocket
 
 ```python
 class ConnectionManager:
-    def __init__(self):
-        self.male_connections: list[WebSocket] = []
-        self.female_connections: list[WebSocket] = []
-
-    async def broadcast_to_gender(self, gender: str, message: dict):
-        # gender 기반 채널 분리 → 타 성별에 정보 노출 방지
+    male_connections: list[WebSocket] = []
+    female_connections: list[WebSocket] = []
+    # gender 기반 채널 분리
 ```
+
+---
+
+## 5단계: DB 및 데이터 흐름 설계
+
+### 테이블 설계
+
+**users**
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | INTEGER PK | |
+| `username` | VARCHAR | 학번 또는 닉네임 |
+| `password_hash` | VARCHAR | 절대 평문 저장 금지 |
+| `gender` | ENUM('male','female') | Mode 분기 기준 |
+| `role` | ENUM('user','admin') | 기본값 'user' |
+| `created_at` | TIMESTAMP | |
+
+**machines**
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | INTEGER PK | |
+| `floor` | INTEGER | 층 번호 |
+| `machine_number` | INTEGER | 층 내 번호 |
+| `status` | ENUM | `available` / `in_use` / `soft_reserved` / `broken` |
+| `gender_restriction` | ENUM / NULL | `male` / `female` / NULL (1~2층 공용) |
+| `reserved_by_user_id` | INTEGER FK / NULL | 소프트 예약한 유저 |
+| `reserved_until` | TIMESTAMP / NULL | 예약 만료 시각 |
+
+**queue_entries**
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | INTEGER PK | |
+| `user_id` | INTEGER FK | |
+| `gender` | ENUM | 비정규화 저장 (JOIN 없이 필터링) |
+| `status` | ENUM | `waiting` / `notified` / `fulfilled` / `expired` / `cancelled` |
+| `assigned_machine_id` | INTEGER FK / NULL | 배정된 세탁기 |
+| `created_at` | TIMESTAMP | **대기 순서 기준** |
+| `notified_at` | TIMESTAMP / NULL | 알림 발송 시각 |
+| `expires_at` | TIMESTAMP / NULL | `notified_at + 10분` |
+
+**machine_status_logs** (통계용 — append-only)
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | INTEGER PK | |
+| `machine_id` | INTEGER FK | |
+| `status` | ENUM | 변경된 상태 |
+| `changed_by_user_id` | INTEGER FK / NULL | 자동 만료 시 NULL |
+| `changed_at` | TIMESTAMP | 변경 시각 — 통계 핵심 |
+
+> 통계 UI는 나중에 만들어도 되지만, 데이터는 지금부터 쌓아야 합니다.
+
+### 핵심 쿼리: Mode 판별
+
+```sql
+-- 남성 기준 이용 가능 세탁기 수 (lazy expiration 포함)
+SELECT COUNT(*) FROM machines
+WHERE
+  (gender_restriction = 'male' OR gender_restriction IS NULL)
+  AND (
+    status = 'available'
+    OR (status = 'soft_reserved' AND reserved_until < NOW())
+  )
+```
+
+### 데이터 흐름: GET /machines (화면 진입)
+
+```
+1. reserved_until < NOW() 인 soft_reserved → available 일괄 해제 (lazy expiration)
+2. 성별 기준 available 수 COUNT
+3. Mode 결정 (A/B/C)
+4. Mode A → 층별 count / Mode B → 층별 hasAvailable / Mode C → 내 대기 순서
+```
+
+### 데이터 흐름: POST /machines/request (Mode B)
+
+```
+1. 현재 mode 확인 → B 아니면 거절
+2. available 세탁기 1대 선택
+3. status → 'soft_reserved', reserved_by → user_id, reserved_until → NOW()+10분
+4. 해당 유저에게만 응답: { floor: 3, machine_number: 1 }
+5. WebSocket broadcast → 전체 클라이언트 상태 갱신
+```
+
+### 데이터 흐름: 세탁기 반납 시
+
+```
+1. machines.status → 'available'
+2. 대기열 waiting 항목 있으면:
+   a. created_at 기준 첫 번째 유저 조회
+   b. queue_entries: status → 'notified', expires_at → NOW()+10분
+   c. 해당 세탁기 → soft_reserved
+   d. WebSocket으로 해당 유저에게만 알림
+3. Mode 재계산 → 전체 broadcast
+```
+
+### 인덱스 전략
+
+| 테이블 | 인덱스 | 이유 |
+|--------|--------|------|
+| `machines` | `(gender_restriction, status)` | Mode 판별 쿼리 핵심 |
+| `machines` | `reserved_until` | Lazy expiration 처리 |
+| `queue_entries` | `(gender, status, created_at)` | 대기열 순서 조회 |
+| `queue_entries` | `(user_id, status)` | 중복 대기 방지 |
 
 ### 흔한 실수
 
-| 실수 | 결과 | 해결 |
-|------|------|------|
-| 비즈니스 로직을 `api/`에 작성 | 라우터 비대화 | `services/`로 분리 |
-| DB 쿼리를 `services/`에 직접 작성 | 계층 붕괴 | `repositories/`로 분리 |
-| models와 schemas를 동일하게 사용 | 민감 정보 노출 | 반드시 분리 |
-| JWT에 비밀번호 저장 | 심각한 보안 취약점 | 절대 금지 |
-| WebSocket 단일 채널 broadcast | 타 성별 정보 노출 | gender 기반 채널 분리 |
+| 실수 | 해결 |
+|------|------|
+| soft_reserved를 available로 카운트 | `reserved_until < NOW()` 조건 필수 |
+| 대기열 순서를 id로 정렬 | **`created_at` 기준 정렬** |
+| gender를 JOIN으로만 가져옴 | queue_entries에 gender 비정규화 |
+| 만료 처리를 스케줄러로만 | lazy expiration을 기본으로 유지 |
 
 ---
 
@@ -414,7 +379,7 @@ class ConnectionManager:
 | 2단계 | 전체 시스템 아키텍처 | ✅ 완료 (승인 대기) |
 | 3단계 | 프론트엔드 구조 설계 | ✅ 완료 (승인 대기) |
 | 4단계 | 백엔드 구조 설계 | ✅ 완료 (승인 대기) |
-| 5단계 | DB 및 데이터 흐름 설계 | ⏳ 대기 |
+| 5단계 | DB 및 데이터 흐름 설계 | ✅ 완료 (승인 대기) |
 | 6단계 | Docker 환경 구성 | ⏳ 대기 |
 | 7단계 | Railway 배포 전략 | ⏳ 대기 |
 | 8단계 | CI/CD 자동화 | ⏳ 대기 |
