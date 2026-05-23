@@ -21,29 +21,25 @@ from app.main import app
 # SQLite in-memory DB (테스트 전용)
 TEST_DATABASE_URL = "sqlite:///./test.db"
 
-engine = create_engine(
+test_engine = create_engine(
     TEST_DATABASE_URL, connect_args={"check_same_thread": False}
 )
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 
 @pytest.fixture(scope="function")
 def db():
     """
     각 테스트 함수마다 독립된 DB 세션을 제공합니다.
-    테스트 후 롤백하여 테스트 간 데이터가 섞이지 않습니다.
+    테스트 시작 시 테이블 생성, 종료 시 드롭하여 테스트 간 완전히 격리됩니다.
     """
-    Base.metadata.create_all(bind=engine)
-    connection = engine.connect()
-    transaction = connection.begin()
-    session = TestingSessionLocal(bind=connection)
+    Base.metadata.create_all(bind=test_engine)
+    session = TestingSessionLocal()
 
     yield session
 
     session.close()
-    transaction.rollback()
-    connection.close()
-    Base.metadata.drop_all(bind=engine)
+    Base.metadata.drop_all(bind=test_engine)
 
 
 @pytest.fixture(scope="function")
