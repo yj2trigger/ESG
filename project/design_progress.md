@@ -6,39 +6,14 @@
 
 ## 1단계: 서비스 정의
 
-### A. 서비스 본질
-
 | 항목 | 내용 |
 |------|------|
 | **서비스 설명** | 기숙사생들이 세탁기를 이용할 때 이용 가능한 세탁기를 원격으로 확인하고, 합리적으로 판단할 수 있도록 하는 앱 |
-| **한 줄 정의** | 기숙사생들이 세탁기 사용 가능 여부를 원격으로 보고 합리적으로 판단할 수 있도록 하는 앱 |
-| **목적** | 과제 프로토타입 + 실제 사용 + 포트폴리오 |
-
-### B. 사용자
-
-| 항목 | 내용 |
-|------|------|
-| **주요 사용자** | 기숙사생 |
-| **역할 구분** | 일반 유저 / 관리자 |
-| **로그인 필요 여부** | 필요 (남녀 구분 + 1인 다계정 방지) |
-
-### C. 핵심 기능 / D. 규모 및 제약
-
-| 항목 | 내용 |
-|------|------|
-| **MVP 필수 기능** | 이용 가능 세탁기 수에 따른 3가지 모드 분기 처리 |
+| **사용자** | 기숙사생 (로그인 필요 — 남녀 구분 + 1인 다계정 방지) / 관리자 |
 | **실시간 기능** | 필요 (알림 + 세탁기 사용 여부 판단) |
 | **동시 사용자** | 프로토타입: 고려 안 함 / 배포: 수백 명 수준 |
-| **개발 기간** | 프로토타입 1일~1주일 |
 
----
-
-## 세탁기 환경 상세
-
-| 층 | 성별 제한 | 세탁기 수 |
-|----|-----------|-----------|
-| 1~2층 | 공용 (남녀 모두) | 총 9대 |
-| 3층 이상 | 층별 성별 구분 | 각 층 1~2대 |
+**세탁기 환경**: 1~2층 공용 9대, 3층 이상 층별 성별 구분 1~2대
 
 ---
 
@@ -143,7 +118,6 @@ def get_current_mode(gender: str, db) -> MachineMode:
 | `machine_status_logs` | machine_id, status, changed_at (append-only, 통계용) |
 
 ```sql
--- Mode 판별 (lazy expiration 포함)
 SELECT COUNT(*) FROM machines
 WHERE (gender_restriction = 'male' OR gender_restriction IS NULL)
   AND (status = 'available'
@@ -180,112 +154,284 @@ docker-compose down -v       # DB 초기화 포함
 
 ## 7단계: Railway 배포 전략
 
-### Railway 서비스 구성
-
-Railway 프로젝트 하나에 아래 3개 서비스를 등록합니다.
-
 ```
 Railway Project: ESG
-├── Service: backend    ← FastAPI (Dockerfile로 배포)
-├── Service: frontend   ← React (Dockerfile.prod로 배포)
-└── Service: db         ← Railway PostgreSQL 플러그인
+├── Service: backend    ← FastAPI (backend/Dockerfile)
+├── Service: frontend   ← React (frontend/Dockerfile.prod)
+└── Service: db         ← Railway PostgreSQL 플러그인 (자동 DATABASE_URL 주입)
 ```
 
-> Railway PostgreSQL은 별도 Dockerfile 없이 플러그인으로 추가합니다.
-> Railway가 내부 네트워크에서 `DATABASE_URL`을 자동으로 주입합니다.
+**환경변수**: backend에 `SECRET_KEY`, `ALGORITHM`, `FRONTEND_URL` / frontend에 `VITE_API_URL`, `VITE_WS_URL`
 
-### 배포 방식: Dockerfile 기반
+**WebSocket**: Railway HTTPS 기본 제공 → `ws://` → `wss://` 자동.
 
-Railway는 GitHub 레포를 연결하면 자동으로 빌드합니다.
-각 서비스에 어떤 Dockerfile을 쓸지 지정합니다.
+**배포 순서**: DB 플러그인 → backend → URL 확인 → frontend 환경변수 설정 → frontend 배포
 
-| 서비스 | Dockerfile 경로 | 빌드 컨텍스트 |
-|--------|----------------|--------------|
-| backend | `backend/Dockerfile` | `backend/` |
-| frontend | `frontend/Dockerfile.prod` | `frontend/` |
-
-### 환경변수 설정 (Railway 대시보드)
-
-**backend 서비스**
-
-| 변수 | 값 |
-|------|---|
-| `DATABASE_URL` | Railway PostgreSQL 자동 주입 |
-| `SECRET_KEY` | 랜덤 강력한 문자열 (직접 입력) |
-| `ALGORITHM` | HS256 |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | 60 |
-| `FRONTEND_URL` | Railway frontend 서비스 URL |
-
-**frontend 서비스**
-
-| 변수 | 값 |
-|------|---|
-| `VITE_API_URL` | Railway backend 서비스 URL |
-| `VITE_WS_URL` | Railway backend 서비스 URL (wss://) |
-
-> VITE_ 접두사는 빌드 시 번들에 포함됩니다.
-> 배포 후 URL이 확정되면 환경변수를 업데이트하고 재배포합니다.
-
-### WebSocket + HTTPS
-
-Railway는 기본으로 HTTPS를 제공합니다.
-WebSocket도 `wss://`(WebSocket Secure)로 자동 처리됩니다.
-
-```
-로컬:       ws://localhost:8000/ws?token=...
-Railway:   wss://your-backend.railway.app/ws?token=...
-```
-
-프론트엔드에서 환경에 따라 자동으로 분기합니다:
-```typescript
-const WS_URL = import.meta.env.VITE_WS_URL  // wss://... (프로덕션)
-```
-
-### 배포 순서
-
-```
-1. Railway 프로젝트 생성
-2. PostgreSQL 플러그인 추가
-3. backend 서비스 추가 → GitHub 레포 연결 → Dockerfile 경로 지정
-4. backend 환경변수 설정 (DATABASE_URL 자동 주입 확인)
-5. backend 배포 완료 → URL 확인 (예: https://esg-backend.railway.app)
-6. frontend 서비스 추가 → Dockerfile.prod 경로 지정
-7. frontend 환경변수 설정 (VITE_API_URL, VITE_WS_URL = backend URL)
-8. frontend 배포 완료 → URL 확인
-9. backend의 FRONTEND_URL 업데이트 → 재배포
-```
-
-### 자동 재배포 설정
-
-Railway는 GitHub push 시 자동 재배포를 지원합니다.
-
-| 브랜치 | 배포 환경 |
-|--------|----------|
-| `main` | 프로덕션 자동 배포 |
-| `dev` (선택) | 스테이징 환경 (필요 시) |
-
-### DB 마이그레이션 전략
-
-```
-Alembic 사용:
-1. backend/alembic/ 디렉토리 초기화
-2. 배포 시 entrypoint에서 자동 마이그레이션 실행
-
-# backend/Dockerfile CMD 수정
+**마이그레이션**:
+```dockerfile
 CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]
 ```
 
-> 프로토타입 단계에서는 `alembic upgrade head` 대신 SQLAlchemy `create_all()`로 간단히 처리해도 됩니다.
+> `VITE_` 접두사 없으면 빌드 시 undefined. 프로덕션에서 `ws://` 사용 시 혼합 콘텐츠 차단.
+
+---
+
+## 8단계: CI/CD 자동화
+
+### GitHub Actions 워크플로우 구성
+
+```
+.github/workflows/
+├── ci.yml     ← PR 시 자동 테스트 + 린트
+└── cd.yml     ← main 브랜치 push 시 Railway 자동 배포
+```
+
+### ci.yml — PR 자동 검증
+
+```yaml
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: test_db
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_db
+          SECRET_KEY: test-secret-key
+          ALGORITHM: HS256
+        run: |
+          cd backend
+          pytest tests/ -v
+
+  frontend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: Type check
+        run: cd frontend && npx tsc --noEmit
+
+      - name: Lint
+        run: cd frontend && npm run lint
+```
+
+### cd.yml — main 브랜치 자동 배포
+
+```yaml
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Railway (backend)
+        uses: bervProject/railway-deploy@main
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: backend
+
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    needs: deploy-backend   # 백엔드 배포 완료 후 프론트엔드 배포
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Railway (frontend)
+        uses: bervProject/railway-deploy@main
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: frontend
+```
+
+### GitHub Secrets 설정
+
+| Secret | 값 | 설정 위치 |
+|--------|---|----------|
+| `RAILWAY_TOKEN` | Railway 계정 토큰 | GitHub repo Settings → Secrets |
+
+> Railway 토큰: Railway 대시보드 → Account Settings → Tokens에서 발급
+
+### 브랜치 전략
+
+```
+main   ← 프로덕션 (직접 push 금지, PR만 허용)
+dev    ← 개발 통합 브랜치
+feat/* ← 기능 개발 브랜치
+
+흐름: feat/xxx → PR → CI 통과 → dev 머지 → PR → main → CD 자동 배포
+```
+
+### Branch Protection Rules (GitHub 설정)
+
+main 브랜치에 다음을 설정합니다:
+- `Require pull request reviews` — 직접 push 방지
+- `Require status checks` — CI 통과 필수
+- `Require branches to be up to date` — 최신 상태 유지
 
 ### 흔한 실수
 
 | 실수 | 결과 | 해결 |
 |------|------|------|
-| VITE_ 없이 환경변수 사용 | 빌드 시 undefined | 반드시 `VITE_` 접두사 |
-| ws:// 를 프로덕션에서 사용 | 혼합 콘텐츠 차단 | `wss://` 사용 |
-| DATABASE_URL 직접 입력 | Railway 플러그인과 충돌 | 자동 주입 값 사용 |
-| SECRET_KEY 기본값 그대로 배포 | 보안 취약점 | 강력한 랜덤 문자열로 교체 |
-| 마이그레이션 없이 배포 | 테이블 없음 오류 | `alembic upgrade head` 또는 `create_all()` |
+| RAILWAY_TOKEN을 코드에 하드코딩 | 토큰 노출 | 반드시 GitHub Secrets 사용 |
+| CI 없이 main에 직접 push | 깨진 코드 배포 | Branch Protection Rules 설정 |
+| 프론트보다 백엔드 배포 순서 늦춤 | API 불일치 | `needs: deploy-backend` |
+| 테스트 DB를 프로덕션 DB로 사용 | 데이터 오염 | CI 전용 postgres service 사용 |
+
+---
+
+## 9단계: 운영 고려사항
+
+### 모니터링
+
+| 항목 | 도구 | 설명 |
+|------|------|------|
+| 에러 트래킹 | Railway 내장 로그 | 무료 플랜에서 사용 가능 |
+| 업타임 모니터링 | UptimeRobot (무료) | 5분 간격 ping, 장애 시 이메일 알림 |
+| 응답 시간 | Railway 메트릭스 | 대시보드에서 CPU/메모리 확인 |
+
+### 로깅 전략
+
+```python
+# backend/core/logging.py
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+
+# 핵심 이벤트 로그 (디버깅에 중요)
+logger.info(f"Mode changed: {old_mode} → {new_mode} (gender={gender})")
+logger.info(f"Soft reserve: machine={machine_id}, user={user_id}, until={reserved_until}")
+logger.info(f"Queue notify: user={user_id}, position={position}")
+logger.warning(f"Soft reserve expired: machine={machine_id}")
+```
+
+### 보안 체크리스트
+
+| 항목 | 조치 |
+|------|------|
+| JWT 만료 시간 | 60분 (필요 시 Refresh Token 추가) |
+| 비밀번호 해싱 | bcrypt 사용 (`passlib[bcrypt]`) |
+| CORS 설정 | `FRONTEND_URL`만 허용 (와일드카드 금지) |
+| SQL Injection | SQLAlchemy ORM 사용으로 자동 방지 |
+| Rate Limiting | `slowapi` 라이브러리 (로그인 시도 제한) |
+| 환경변수 | 코드에 하드코딩 금지, `.env.example`만 커밋 |
+
+### CORS 설정 예시
+
+```python
+# backend/main.py
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:5173")],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+### 장애 대응 시나리오
+
+| 상황 | 감지 | 대응 |
+|------|------|------|
+| Railway 서비스 다운 | UptimeRobot 알림 | Railway 대시보드 → 재시작 |
+| WebSocket 연결 끊김 | 프론트엔드 자동 재연결 | `useWebSocket` 훅에 재연결 로직 구현 |
+| DB 연결 실패 | FastAPI 500 에러 | Railway PostgreSQL 상태 확인 |
+| soft_reserved 미해제 누적 | 세탁기 수 감소 | lazy expiration 정상 동작 확인 |
+
+### WebSocket 재연결 로직 (프론트엔드)
+
+```typescript
+// src/hooks/useWebSocket.ts
+const useWebSocket = (url: string) => {
+  const reconnect = useCallback(() => {
+    const ws = new WebSocket(url)
+
+    ws.onclose = () => {
+      // 3초 후 재연결 시도
+      setTimeout(() => reconnect(), 3000)
+    }
+
+    return ws
+  }, [url])
+
+  return reconnect()
+}
+```
+
+### 확장 고려사항 (실서비스 전환 시)
+
+| 현재 (프로토타입) | 확장 시 |
+|------------------|---------|
+| Lazy expiration | APScheduler 또는 Celery로 정확한 타이머 |
+| WebSocket 인앱 알림 | PWA Push Notification (백그라운드 수신) |
+| 더미데이터 토글 | IoT API 연동 (Repository Layer만 교체) |
+| 단일 Railway 인스턴스 | 트래픽 증가 시 Railway 스케일링 |
+
+### 프로토타입 완성 체크리스트
+
+```
+□ docker-compose up --build → 정상 실행
+□ 회원가입 / 로그인 → JWT 정상 발급
+□ /machines → 현재 모드 A/B/C 정상 반환
+□ Mode B: [사용하시겠습니까?] → 위치 안내 → 10분 후 자동 해제
+□ Mode C: 대기열 등록 → 세탁기 반납 시 WebSocket 알림 수신
+□ WebSocket 연결 끊김 → 3초 후 자동 재연결
+□ Railway 배포 → HTTPS + wss:// 정상 동작
+□ GitHub Actions CI → PR 시 테스트 자동 실행
+□ GitHub Actions CD → main push 시 자동 배포
+```
 
 ---
 
@@ -300,5 +446,5 @@ CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port
 | 5단계 | DB 및 데이터 흐름 설계 | ✅ 완료 (승인 대기) |
 | 6단계 | Docker 환경 구성 | ✅ 완료 (승인 대기) |
 | 7단계 | Railway 배포 전략 | ✅ 완료 (승인 대기) |
-| 8단계 | CI/CD 자동화 | ⏳ 대기 |
-| 9단계 | 운영 고려사항 | ⏳ 대기 |
+| 8단계 | CI/CD 자동화 | ✅ 완료 (승인 대기) |
+| 9단계 | 운영 고려사항 | ✅ 완료 (승인 대기) |
