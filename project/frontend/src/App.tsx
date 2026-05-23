@@ -1,12 +1,21 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-
-// 페이지는 기능 구현 시 순서대로 추가됩니다
-// 현재: 기능 2 (성별 선택) 구현 예정
+import { useAuthStore } from './store/authStore'
+import GenderSelectPage from './pages/GenderSelectPage'
 
 function App() {
+  const gender = useAuthStore((s) => s.gender)
+
   return (
     <Routes>
-      <Route path="/" element={<div>준비 중...</div>} />
+      <Route path="/gender" element={<GenderSelectPage />} />
+      <Route
+        path="/"
+        element={
+          gender
+            ? <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>메인 화면 (준비 중...)</div>
+            : <Navigate to="/gender" replace />
+        }
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
