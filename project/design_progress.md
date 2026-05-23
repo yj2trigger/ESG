@@ -63,174 +63,88 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### MODE A (4대 이상)
-- 층별 이용 가능 세탁기 **수** 표시
-- 사용자가 직접 판단하여 이동
-
-### MODE B (1~3대) — 소프트 예약
-- 화면: "현재 세탁기가 1~3대이기에 수요 분산을 위해 위치를 직접 안내합니다."
-- [사용하시겠습니까?] 버튼 표시
-- 버튼 누름 → **해당 사용자에게만** 세탁기 1대의 위치(층+번호) 공개
-- 해당 세탁기는 **10분간 소프트 예약** 상태 (다른 사용자에게 이용중으로 표시)
-- 10분 내 실제 사용 → 정상 완료
-- 10분 내 미사용 → 소프트 예약 해제, 다시 이용 가능 상태로 복귀
-
-### MODE C (0대) — 대기열 배정
-- 버튼을 누르면 **대기열** 등록
-- 세탁기가 비면 → 대기열 순서대로 세탁기 1대의 위치 **알림** 발송
-- 알림 받은 사용자가 **10분 내 미사용** 시 → 소프트 예약 해제, 다음 대기자에게 알림
-- 다시 4대 이상이 되면 MODE A로 복귀
-
-### 공통 핵심 메커니즘 (Mode B & C 공유)
-```
-soft_reserve(machine_id, user_id, duration=10min)
-  ├── 해당 세탁기를 특정 사용자에게 1:1 귀속
-  ├── 타이머 만료 시 자동 해제
-  └── 해제 후 → Mode 재계산 → 필요 시 다음 사용자에게 배정
-
-차이점:
-  Mode B = 이용 가능한 세탁기가 있으므로 즉시 배정
-  Mode C = 이용 가능한 세탁기가 없으므로 대기 후 배정
-```
+### MODE A / B / C 요약
+- **A**: 층별 이용 가능 수 표시, 사용자가 직접 판단
+- **B**: [사용하시겠습니까?] → 세탁기 1대 위치 공개 + 10분 소프트 예약
+- **C**: 대기열 등록 → 빈 자리 발생 시 알림 → 10분 미사용 시 다음 대기자에게 이동
 
 ---
 
 ## 2단계: 전체 시스템 아키텍처
 
-### 시스템 구성도
-
 ```
-[사용자 브라우저 / PWA]
-        │
-        │ HTTP (REST) + WebSocket
-        ▼
-[React + TypeScript]  ← 프론트엔드
-        │
-        │ HTTPS
-        ▼
-[FastAPI]             ← 백엔드 API + WebSocket 서버
-   ├── Auth (JWT)
-   ├── Machine API
-   ├── Queue Manager
-   └── Notification Service
-        │
-        ├── PostgreSQL  ← 영구 데이터 (유저, 세탁기, 대기열)
-        │
-        └── (더미데이터 레이어) ← IoT 연결 전까지
-
-[GitHub Actions] → [Railway] ← 배포
+[React + TypeScript] ←HTTP/WS→ [FastAPI] ←→ [PostgreSQL]
+[GitHub Actions] → [Railway]
 ```
 
-### 핵심 기술 선택 결정표
+### 핵심 결정
 
-| 항목 | 선택 | 대안 | 이유 |
-|------|------|------|------|
-| 실시간 통신 | **WebSocket** | SSE, Polling | 양방향 필요 (대기열 알림) |
-| 알림 방식 | **WebSocket 인앱 알림** | PWA Push Notification | 프로토타입 복잡도 최소화 |
-| 대기열 저장 | **PostgreSQL** | Redis Queue | 별도 인프라 불필요 |
-| 인증 | **JWT** | Session | 무상태, 모바일 친화적 |
-| 더미 데이터 | **DB 시드 + 수동 토글** | 하드코딩 | IoT 연결 시 교체 용이 |
+| 항목 | 선택 | 이유 |
+|------|------|------|
+| 실시간 통신 | WebSocket | 양방향 (대기열 알림) |
+| 대기열 저장 | PostgreSQL | Redis 불필요 |
+| 인증 | JWT | 무상태, gender 포함 |
+| 더미 데이터 | DB 시드 + 수동 토글 | IoT 연결 시 Repository Layer만 교체 |
 
-### 레이어 분리 전략
+### 레이어
 
 ```
-Frontend                  Backend
-─────────────────         ────────────────────────────
-View Layer                Router Layer (API 진입점)
-State Layer               Service Layer (비즈니스 로직)
-API Layer                 Repository Layer (DB 접근)
+Frontend: View → State → API
+Backend:  Router → Service → Repository → DB
 ```
 
-### 흔한 실수
-
-| 실수 | 해결 |
-|------|------|
-| Mode를 프론트에서만 계산 | **백엔드에서 계산** |
-| WebSocket 하나로 전체 broadcast | gender 기반 **채널 분리** |
-| 대기열을 메모리에 저장 | **PostgreSQL에 저장** |
+> Mode 계산은 반드시 백엔드. WebSocket은 gender 기반 채널 분리.
 
 ---
 
 ## 3단계: 프론트엔드 구조 설계
 
-### 폴더 구조
-
 ```
 src/
-├── api/          ← machines.ts, websocket.ts
-├── components/   ← common/, machine/
-├── pages/        ← LoginPage.tsx, DashboardPage.tsx
-├── hooks/        ← useWebSocket.ts, useMachines.ts
-├── store/        ← authStore.ts, machineStore.ts (Zustand)
-└── types/        ← machine.ts, user.ts
+├── api/      ← machines.ts, websocket.ts
+├── components/ ← common/, machine/
+├── pages/    ← LoginPage.tsx, DashboardPage.tsx
+├── hooks/    ← useWebSocket.ts, useMachines.ts
+├── store/    ← authStore.ts, machineStore.ts (Zustand)
+└── types/    ← machine.ts, user.ts
 ```
-
-### TypeScript 핵심 타입
 
 ```typescript
 export type MachineMode = 'A' | 'B' | 'C'
-
 export interface Machine {
   id: number; floor: number
   status: 'available' | 'in_use' | 'soft_reserved' | 'broken'
   genderRestriction: 'male' | 'female' | null
 }
-
-export interface DashboardState {
-  mode: MachineMode; floors: FloorInfo[]
-  myReservation: Machine | null; queuePosition: number | null
-}
 ```
 
-### 컴포넌트 트리
-
-```
-DashboardPage
-├── ModeBanner
-├── FloorList → FloorCard
-│   ├── [A] <MachineCount />  ├── [B] <ReserveButton />  └── [C] <QueueButton />
-└── MyStatusPanel
-```
-
-> FloorCard는 모드를 모릅니다. 부모가 모드 판단 후 올바른 자식 컴포넌트 선택.
-
-### WebSocket 이벤트
-
-```
-서버→클라이언트: MODE_CHANGE / FLOOR_UPDATE / MY_ASSIGNMENT / QUEUE_UPDATE
-클라이언트→서버: REQUEST_MACHINE / JOIN_QUEUE
-```
+> FloorCard는 모드를 모름. 부모(DashboardPage)가 모드 판단 후 자식 컴포넌트 선택.
 
 ---
 
 ## 4단계: 백엔드 구조 설계
 
-### 폴더 구조
-
 ```
 backend/
-├── main.py / config.py
-├── api/        ← auth.py, machines.py, queue.py, ws.py
-├── services/   ← machine_service.py, queue_service.py, auth_service.py
+├── api/          ← auth.py, machines.py, queue.py, ws.py
+├── services/     ← machine_service.py, queue_service.py, auth_service.py
 ├── repositories/ ← machine_repo.py, queue_repo.py, user_repo.py
-├── models/     ← SQLAlchemy: user.py, machine.py, queue_entry.py
-├── schemas/    ← Pydantic: machine.py, user.py
-└── core/       ← database.py, security.py, dependencies.py
+├── models/       ← SQLAlchemy ORM
+├── schemas/      ← Pydantic 요청/응답
+└── core/         ← database.py, security.py, dependencies.py
 ```
 
-### API 엔드포인트
+**API 엔드포인트**
 
 | Method | Path | 설명 | 인증 |
 |--------|------|------|------|
-| POST | `/auth/register` | 회원가입 (gender 포함) | 불필요 |
-| POST | `/auth/login` | 로그인 → JWT 반환 | 불필요 |
-| GET | `/machines` | 현재 모드 + 층별 상태 | 필요 |
-| POST | `/machines/request` | Mode B: 세탁기 배정 | 필요 |
-| POST | `/queue/join` | Mode C: 대기열 등록 | 필요 |
-| DELETE | `/queue/leave` | 대기열 취소 | 필요 |
+| POST | `/auth/register` | 회원가입 | 불필요 |
+| POST | `/auth/login` | JWT 반환 | 불필요 |
+| GET | `/machines` | 모드 + 층별 상태 | 필요 |
+| POST | `/machines/request` | Mode B 배정 | 필요 |
+| POST | `/queue/join` | Mode C 대기 등록 | 필요 |
+| DELETE | `/queue/leave` | 대기 취소 | 필요 |
 | WS | `/ws?token=...` | 실시간 연결 | JWT 쿼리 파라미터 |
-
-### Mode 계산 로직
 
 ```python
 def get_current_mode(gender: str, db) -> MachineMode:
@@ -240,134 +154,236 @@ def get_current_mode(gender: str, db) -> MachineMode:
     else: return 'C'
 ```
 
-### 타이머: Lazy expiration (프로토타입)
-
-GET 요청 시 `reserved_until < NOW()` 항목 자동 해제 후 반환.
-
-### WebSocket
-
-```python
-class ConnectionManager:
-    male_connections: list[WebSocket] = []
-    female_connections: list[WebSocket] = []
-    # gender 기반 채널 분리
-```
-
 ---
 
 ## 5단계: DB 및 데이터 흐름 설계
 
-### 테이블 설계
+**테이블**
 
-**users**
+| 테이블 | 핵심 컬럼 |
+|--------|----------|
+| `users` | id, username, password_hash, gender, role |
+| `machines` | id, floor, machine_number, status, gender_restriction, reserved_by_user_id, reserved_until |
+| `queue_entries` | id, user_id, gender(비정규화), status, created_at, notified_at, expires_at |
+| `machine_status_logs` | machine_id, status, changed_at (append-only, 통계용) |
 
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| `id` | INTEGER PK | |
-| `username` | VARCHAR | 학번 또는 닉네임 |
-| `password_hash` | VARCHAR | 절대 평문 저장 금지 |
-| `gender` | ENUM('male','female') | Mode 분기 기준 |
-| `role` | ENUM('user','admin') | 기본값 'user' |
-| `created_at` | TIMESTAMP | |
-
-**machines**
-
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| `id` | INTEGER PK | |
-| `floor` | INTEGER | 층 번호 |
-| `machine_number` | INTEGER | 층 내 번호 |
-| `status` | ENUM | `available` / `in_use` / `soft_reserved` / `broken` |
-| `gender_restriction` | ENUM / NULL | `male` / `female` / NULL (1~2층 공용) |
-| `reserved_by_user_id` | INTEGER FK / NULL | 소프트 예약한 유저 |
-| `reserved_until` | TIMESTAMP / NULL | 예약 만료 시각 |
-
-**queue_entries**
-
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| `id` | INTEGER PK | |
-| `user_id` | INTEGER FK | |
-| `gender` | ENUM | 비정규화 저장 (JOIN 없이 필터링) |
-| `status` | ENUM | `waiting` / `notified` / `fulfilled` / `expired` / `cancelled` |
-| `assigned_machine_id` | INTEGER FK / NULL | 배정된 세탁기 |
-| `created_at` | TIMESTAMP | **대기 순서 기준** |
-| `notified_at` | TIMESTAMP / NULL | 알림 발송 시각 |
-| `expires_at` | TIMESTAMP / NULL | `notified_at + 10분` |
-
-**machine_status_logs** (통계용 — append-only)
-
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| `id` | INTEGER PK | |
-| `machine_id` | INTEGER FK | |
-| `status` | ENUM | 변경된 상태 |
-| `changed_by_user_id` | INTEGER FK / NULL | 자동 만료 시 NULL |
-| `changed_at` | TIMESTAMP | 변경 시각 — 통계 핵심 |
-
-> 통계 UI는 나중에 만들어도 되지만, 데이터는 지금부터 쌓아야 합니다.
-
-### 핵심 쿼리: Mode 판별
+**핵심 쿼리 (Mode 판별)**
 
 ```sql
--- 남성 기준 이용 가능 세탁기 수 (lazy expiration 포함)
 SELECT COUNT(*) FROM machines
-WHERE
-  (gender_restriction = 'male' OR gender_restriction IS NULL)
-  AND (
-    status = 'available'
-    OR (status = 'soft_reserved' AND reserved_until < NOW())
-  )
+WHERE (gender_restriction = 'male' OR gender_restriction IS NULL)
+  AND (status = 'available'
+       OR (status = 'soft_reserved' AND reserved_until < NOW()))
 ```
 
-### 데이터 흐름: GET /machines (화면 진입)
+**흐름 요약**
+- GET /machines: lazy expiration 처리 → COUNT → Mode 결정 → 응답
+- POST /machines/request: mode=B 확인 → soft_reserve → 해당 유저에게만 위치 응답 → broadcast
+- 반납: available → 대기열 첫 번째 유저 조회 → soft_reserve → WebSocket 알림
+
+**인덱스**
+- `machines`: `(gender_restriction, status)`, `reserved_until`
+- `queue_entries`: `(gender, status, created_at)`, `(user_id, status)`
+
+---
+
+## 6단계: Docker 환경 구성
+
+### 전체 파일 구조
 
 ```
-1. reserved_until < NOW() 인 soft_reserved → available 일괄 해제 (lazy expiration)
-2. 성별 기준 available 수 COUNT
-3. Mode 결정 (A/B/C)
-4. Mode A → 층별 count / Mode B → 층별 hasAvailable / Mode C → 내 대기 순서
+project-root/
+├── docker-compose.yml       ← 로컬 개발 전체 실행
+├── docker-compose.prod.yml  ← 프로덕션 (Railway 제외 서비스용)
+│
+├── backend/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   └── requirements.txt
+│
+└── frontend/
+    ├── Dockerfile
+    ├── Dockerfile.prod      ← nginx 기반 정적 빌드용
+    └── .dockerignore
 ```
 
-### 데이터 흐름: POST /machines/request (Mode B)
+### docker-compose.yml (로컬 개발)
+
+```yaml
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: esg_user
+      POSTGRES_PASSWORD: esg_pass
+      POSTGRES_DB: esg_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U esg_user -d esg_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://esg_user:esg_pass@db:5432/esg_db
+      SECRET_KEY: dev-secret-key-change-in-prod
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+    volumes:
+      - ./backend:/app       # 핫 리로드용
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    command: npm run dev -- --host
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+      VITE_WS_URL: ws://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules    # 컨테이너 내부 node_modules 보존
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+```
+
+### backend/Dockerfile
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 시스템 의존성
+RUN apt-get update && apt-get install -y \
+    gcc libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 의존성 먼저 설치 (레이어 캐싱 활용)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### frontend/Dockerfile (개발용)
+
+```dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host"]
+```
+
+### frontend/Dockerfile.prod (프로덕션 — nginx)
+
+```dockerfile
+# 1단계: 빌드
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+# 2단계: nginx로 정적 파일 서빙
+FROM nginx:alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+```
+
+### nginx.conf (SPA 라우팅 대응)
+
+```nginx
+server {
+    listen 80;
+
+    location / {
+        root /usr/share/nginx/html;
+        try_files $uri $uri/ /index.html;  # React Router 새로고침 대응
+    }
+
+    location /api/ {
+        proxy_pass http://backend:8000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /ws {
+        proxy_pass http://backend:8000/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";  # WebSocket 업그레이드 필수
+    }
+}
+```
+
+### 환경변수 관리
 
 ```
-1. 현재 mode 확인 → B 아니면 거절
-2. available 세탁기 1대 선택
-3. status → 'soft_reserved', reserved_by → user_id, reserved_until → NOW()+10분
-4. 해당 유저에게만 응답: { floor: 3, machine_number: 1 }
-5. WebSocket broadcast → 전체 클라이언트 상태 갱신
+# .env.local (git에 올리지 않음)
+DATABASE_URL=postgresql://esg_user:esg_pass@db:5432/esg_db
+SECRET_KEY=your-secret-key-here
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+
+# .env.example (git에 올림 — 템플릿)
+DATABASE_URL=postgresql://USER:PASS@HOST:PORT/DB
+SECRET_KEY=change-me
 ```
 
-### 데이터 흐름: 세탁기 반납 시
+### 로컬 개발 실행 방법
 
+```bash
+# 전체 실행
+docker-compose up --build
+
+# DB만 실행 (백엔드 로컬 실행 시)
+docker-compose up db
+
+# 로그 확인
+docker-compose logs -f backend
+
+# DB 초기화
+docker-compose down -v  # 볼륨까지 삭제
 ```
-1. machines.status → 'available'
-2. 대기열 waiting 항목 있으면:
-   a. created_at 기준 첫 번째 유저 조회
-   b. queue_entries: status → 'notified', expires_at → NOW()+10분
-   c. 해당 세탁기 → soft_reserved
-   d. WebSocket으로 해당 유저에게만 알림
-3. Mode 재계산 → 전체 broadcast
-```
-
-### 인덱스 전략
-
-| 테이블 | 인덱스 | 이유 |
-|--------|--------|------|
-| `machines` | `(gender_restriction, status)` | Mode 판별 쿼리 핵심 |
-| `machines` | `reserved_until` | Lazy expiration 처리 |
-| `queue_entries` | `(gender, status, created_at)` | 대기열 순서 조회 |
-| `queue_entries` | `(user_id, status)` | 중복 대기 방지 |
 
 ### 흔한 실수
 
-| 실수 | 해결 |
-|------|------|
-| soft_reserved를 available로 카운트 | `reserved_until < NOW()` 조건 필수 |
-| 대기열 순서를 id로 정렬 | **`created_at` 기준 정렬** |
-| gender를 JOIN으로만 가져옴 | queue_entries에 gender 비정규화 |
-| 만료 처리를 스케줄러로만 | lazy expiration을 기본으로 유지 |
+| 실수 | 결과 | 해결 |
+|------|------|------|
+| depends_on만 사용 | DB 준비 전 백엔드 시작 | `healthcheck` + `condition: service_healthy` |
+| node_modules를 volume mount | 컨테이너 내 모듈 덮어씌움 | `/app/node_modules` 익명 볼륨으로 보존 |
+| nginx에서 WebSocket 프록시 미설정 | WS 연결 실패 | `Upgrade`, `Connection` 헤더 필수 |
+| SECRET_KEY를 코드에 하드코딩 | 보안 취약점 | 환경변수로만 관리 |
+| try_files 없는 nginx | SPA 새로고침 404 | `try_files $uri $uri/ /index.html` |
 
 ---
 
@@ -380,7 +396,7 @@ WHERE
 | 3단계 | 프론트엔드 구조 설계 | ✅ 완료 (승인 대기) |
 | 4단계 | 백엔드 구조 설계 | ✅ 완료 (승인 대기) |
 | 5단계 | DB 및 데이터 흐름 설계 | ✅ 완료 (승인 대기) |
-| 6단계 | Docker 환경 구성 | ⏳ 대기 |
+| 6단계 | Docker 환경 구성 | ✅ 완료 (승인 대기) |
 | 7단계 | Railway 배포 전략 | ⏳ 대기 |
 | 8단계 | CI/CD 자동화 | ⏳ 대기 |
 | 9단계 | 운영 고려사항 | ⏳ 대기 |
