@@ -347,7 +347,116 @@ WS /ws?token=...
 
 ---
 
-## 7. 현재 플레이스홀더 / 미구현 목록
+## 7. 구현 7단계 (Docker) — 로컬 실행 환경
+
+### 7-1. lifespan seed 추가
+
+테스트에서는 `conftest.py`의 `seeded_client`가 `machine_repo.seed(db)`를 호출했으나,
+실제 Docker 실행 시에는 seed가 없어서 세탁기 테이블이 비어 있는 상태.
+
+→ `main.py`의 `lifespan`에 seed 추가:
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        machine_repo.seed(db)
+    finally:
+        db.close()
+    yield
+```
+
+`seed()`는 이미 `if db.query(func.count(Machine.id)).scalar(): return` 가드가 있으므로
+재시작해도 중복 삽입 없음.
+
+---
+
+### 7-2. `.env` 파일 생성
+
+`docker-compose.yml`이 `${POSTGRES_USER}` 등 env var를 참조하는데,
+`.env` 파일이 없으면 빈 문자열로 치환되어 PostgreSQL 컨테이너가 오동작.
+`.env.example`을 기반으로 `.env` 생성. git 제외(.gitignore에 이미 포함).
+
+---
+
+### 7-3. docker-compose.yml `version` 필드 제거
+
+**증상**: `docker compose up` 시 `version is obsolete` 경고.
+
+**판단**: Docker Compose v2에서 `version` 필드는 더 이상 필요 없음. 제거.
+
+---
+
+### 7-4. React StrictMode + WebSocket 1006 disconnect
+
+**증상**: 백엔드 로그에 매 WS 연결마다 `WebSocketDisconnect code=1006` 발생.
+`ws.py` 41번째 줄 `await ws.send_json(...)` 에서 실패.
+
+**원인**: React 18 StrictMode는 개발 모드에서 effect를 두 번 실행(mount → cleanup → remount).
+첫 번째 mount에서 WS1 연결 → cleanup에서 `ws.close()` → 서버가 아직 send_json 중에 연결 끊김 → 1006.
+
+**판단**: 두 번째 mount의 WS2는 정상 동작. 1006은 항상 첫 번째(StrictMode 가짜 mount) 연결에서만 발생.
+→ 프로덕션 빌드(`StrictMode` 미적용)에서는 발생하지 않음. 프로토타입 단계에서는 무시.
+
+> **확장 시 메모**: 배포 환경(`npm run build`)에서는 StrictMode 동작 방식이 다르므로 1006 없음.
+
+---
+
+## 8. 대시보드 loading 무한 버그
+
+### 8-1. 증상
+
+회원가입 후 DashboardPage로 이동하면 "불러오는 중..." 무한 표시.
+`GET /machines` 는 200 OK 반환 중.
+
+### 8-2. 원인 — machineStore.setData가 loading을 해제하지 않음
+
+```typescript
+// 버그 있는 코드
+setData: (data) => set({ data, error: null }),  // loading: true 그대로 유지됨
+```
+
+`refresh()` 가 `setLoading(true)` 후 `getMachines().then(setData)`를 호출하는데,
+`setData`가 `loading`을 건드리지 않아서 `loading: true` 상태가 영구 유지됨.
+
+### 8-3. 수정
+
+```typescript
+// 수정 후
+setData: (data) => set({ data, loading: false, error: null }),
+```
+
+추가로 `DashboardPage`의 `refresh` 함수도 `.then(setData)` 체인 방식에서
+`async/await` + `try/catch`로 전환. `useEffect` 의존성도 `[user]`(객체 참조)에서
+`[token]`(string 원시값)으로 변경해 불필요한 re-run 방지.
+
+```typescript
+const token = user?.token ?? null
+
+const refresh = async () => {
+    if (!token) return
+    setLoading(true)
+    try {
+        const res = await getMachines(token)
+        setData(res)
+    } catch (e) {
+        setError(e instanceof Error ? e.message : '오류 발생')
+    }
+}
+
+useEffect(() => { refresh() }, [token])
+```
+
+### 8-4. Vite HMR + Docker 볼륨 주의
+
+파일 수정 후 Docker 볼륨 마운트 환경에서 Vite HMR이 브라우저에 전달되지 않을 수 있음.
+브라우저 하드 새로고침(Ctrl+Shift+R) 또는 프론트엔드 컨테이너 재시작으로 해결.
+
+---
+
+## 9. 현재 플레이스홀더 / 미구현 목록
 
 | 항목 | 현재 상태 | 이유 | 다음 단계 |
 |------|----------|------|----------|
@@ -358,15 +467,16 @@ WS /ws?token=...
 | 세탁기 상태 직접 변경 (관리자) | 없음 | 관리자 페이지 미구현 | `/admin/machines/{id}` PATCH |
 | 비밀번호 변경 / 탈퇴 | 없음 | MVP 외 | 나중에 추가 |
 | Rate limiting | 없음 | 프로토타입 | `slowapi` 추가 (설계 9단계에 명시) |
-| Docker lifespan seed | 없음 | 테스트에서만 seed | main.py lifespan에 seed 추가 필요 (7단계) |
-| 계정 중복 가입 악용 | username 중복만 차단 | 프로토타입 scope 밖 | **카카오 OAuth 연동**: 카카오 계정 1개당 계정 1개로 제한. `python-social-auth` 또는 `authlib` 사용, `/auth/kakao` 엔드포인트 추가, `User` 모델에 `kakao_id` 컬럼 추가, 기존 username/password 방식 제거 |
+| Docker lifespan seed | ✅ 완료 | — | — |
+| 계정 중복 가입 악용 | username 중복만 차단 | 프로토타입 scope 밖 | **카카오 OAuth 연동**: `authlib`, `/auth/kakao`, `User.kakao_id` |
+| 대시보드 loading 무한 버그 | ✅ 수정 완료 | `setData`에 `loading:false` 누락 | — |
 
 ---
 
-## 8. 다음 단계 예고 (구현 7단계)
+## 10. 다음 단계 예고 (구현 8단계)
 
-Docker Compose로 실제 실행 가능하게 만들기 위해:
-1. `main.py` lifespan에 `machine_repo.seed(db)` 추가
-2. `docker-compose.yml` 검증 (현재 골격만 있음)
-3. backend/frontend Dockerfile 확인
-4. `docker-compose up --build` → 브라우저 직접 확인
+CI/CD 구성:
+1. `.github/workflows/ci.yml` 완성 — pytest + vitest 자동 실행
+2. `.github/workflows/cd.yml` 생성 — main 브랜치 push 시 Railway 자동 배포
+3. Railway 프로젝트 연결 + 환경변수 설정
+4. `ws://` → `wss://` (HTTPS 환경), CORS `allow_origins` Railway URL로 교체
