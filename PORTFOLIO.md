@@ -27,7 +27,9 @@
 - **1~3대 (Mode B)**: "사용하시겠습니까?" 버튼 → 세탁기 1대 위치를 해당 사용자에게만 공개 + 10분 소프트 예약.
 - **0대 (Mode C)**: 대기열 등록 → 세탁기가 비면 순서대로 WebSocket 알림 발송 → 10분 미사용 시 다음 대기자에게 이동.
 
-**기술 스택**: React + TypeScript / FastAPI / PostgreSQL / Docker / Railway
+**기술 스택**: React + TypeScript / FastAPI / PostgreSQL / Docker / Fly.io + Supabase + Vercel
+
+**인증**: 한양대 이메일(@hanyang.ac.kr) 도메인 제한 + 6자리 OTP 코드 인증 (Resend 발송)
 
 ---
 
@@ -48,9 +50,10 @@
 | 4단계 | 백엔드 구조 | Router → Service → Repository 3계층 분리, Mode 계산은 반드시 백엔드에서 |
 | 5단계 | DB 설계 | Lazy expiration 방식 채택 (APScheduler 없이 GET 요청 시 만료 처리) |
 | 6단계 | Docker 구성 | healthcheck + depends_on으로 DB 준비 후 백엔드 시작 보장 |
-| 7단계 | Railway 배포 | wss:// 자동 처리, VITE_ 접두사 규칙 명시 |
-| 8단계 | CI/CD | GitHub Actions, 현재는 수동 트리거 — 팀 협업 전환 시 PR 트리거로 변경 |
-| 9단계 | 운영 | Lazy expiration → 실서비스 시 APScheduler로 교체, WebSocket 자동 재연결 로직 |
+| 7단계 | Fly.io + Supabase + Vercel 배포 | Railway 무료 종료 → 무료 대안 3종으로 전환 |
+| 8단계 | CI/CD | GitHub Actions, main push 시 flyctl + vercel 자동 배포 |
+| 9단계 | 운영 | Rate limiting (slowapi), soft_reserve 중복 방지 (409) |
+| 10단계 | 이메일 인증 | @hanyang.ac.kr 도메인 제한 + 6자리 OTP (Resend) |
 
 #### 2. 설계 오류를 직접 발견하고 수정
 

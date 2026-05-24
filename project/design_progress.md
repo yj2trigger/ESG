@@ -1,6 +1,6 @@
 # 기숙사 세탁기 예약 서비스 — 설계 진행 문서
 
-> 기술 스택: React + TypeScript / FastAPI / PostgreSQL / Docker / Railway
+> 기술 스택: React + TypeScript / FastAPI / PostgreSQL / Docker / Fly.io + Supabase + Vercel
 
 ---
 
@@ -90,8 +90,9 @@ backend/
 
 | Method | Path | 설명 | 인증 |
 |--------|------|------|------|
-| POST | `/auth/register` | 회원가입 | 불필요 |
-| POST | `/auth/login` | JWT 반환 | 불필요 |
+| POST | `/auth/register` | 회원가입 (@hanyang.ac.kr 검증, 코드 발송) | 불필요 |
+| POST | `/auth/verify-email` | 6자리 코드 인증 → JWT 반환 | 불필요 |
+| POST | `/auth/login` | JWT 반환 (인증된 계정만) | 불필요 |
 | GET | `/machines` | 모드 + 층별 상태 | 필요 |
 | POST | `/machines/request` | Mode B 배정 | 필요 |
 | POST | `/queue/join` | Mode C 대기 등록 | 필요 |
@@ -112,9 +113,10 @@ def get_current_mode(gender: str, db) -> MachineMode:
 
 | 테이블 | 핵심 컬럼 |
 |--------|----------|
-| `users` | id, username, password_hash, gender, role |
+| `users` | id, username, password_hash, gender, role, email, is_verified |
 | `machines` | id, floor, machine_number, status, gender_restriction, reserved_by_user_id, reserved_until |
 | `queue_entries` | id, user_id, gender(비정규화), status, created_at, notified_at, expires_at |
+| `email_verifications` | id, email, code(6자리), expires_at (10분) |
 | `machine_status_logs` | machine_id, status, changed_at (append-only, 통계용) |
 
 ```sql
@@ -152,27 +154,28 @@ docker-compose down -v       # DB 초기화 포함
 
 ---
 
-## 7단계: Railway 배포 전략
+## 7단계: 배포 전략 (Fly.io + Supabase + Vercel)
 
-```
-Railway Project: ESG
-├── Service: backend    ← FastAPI (backend/Dockerfile)
-├── Service: frontend   ← React (frontend/Dockerfile.prod)
-└── Service: db         ← Railway PostgreSQL 플러그인 (자동 DATABASE_URL 주입)
-```
+> Railway 무료 플랜 종료로 전환. 모두 무료 플랜 사용.
 
-**환경변수**: backend에 `SECRET_KEY`, `ALGORITHM`, `FRONTEND_URL` / frontend에 `VITE_API_URL`, `VITE_WS_URL`
+| 역할 | 플랫폼 | 비고 |
+|------|--------|------|
+| Backend (FastAPI) | Fly.io | `esg-laundry-checker.fly.dev`, SIN 리전, 256MB |
+| Database (PostgreSQL) | Supabase | 무료 500MB |
+| Frontend (React) | Vercel | GitHub 연동 자동 배포 |
+| 이메일 발송 | Resend | 무료 100통/일 |
 
-**WebSocket**: Railway HTTPS 기본 제공 → `ws://` → `wss://` 자동.
+**Fly.io 환경변수 (Secrets)**:
+- `DATABASE_URL` — Supabase PostgreSQL 연결 문자열
+- `SECRET_KEY` — JWT 서명 키
+- `CORS_ORIGINS` — Vercel 도메인
+- `RESEND_API_KEY` — 이메일 발송 키
 
-**배포 순서**: DB 플러그인 → backend → URL 확인 → frontend 환경변수 설정 → frontend 배포
+**Vercel 환경변수**:
+- `VITE_API_URL=https://esg-laundry-checker.fly.dev`
+- `VITE_WS_URL=wss://esg-laundry-checker.fly.dev`
 
-**마이그레이션**:
-```dockerfile
-CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]
-```
-
-> `VITE_` 접두사 없으면 빌드 시 undefined. 프로덕션에서 `ws://` 사용 시 혼합 콘텐츠 차단.
+> `VITE_` 접두사 없으면 빌드 시 undefined. `auto_stop_machines = false` 필수 (WebSocket 유지).
 
 ---
 
@@ -181,149 +184,24 @@ CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port
 ### GitHub Actions 워크플로우 구성
 
 ```
-.github/workflows/
-├── ci.yml     ← PR 시 자동 테스트 + 린트
-└── cd.yml     ← main 브랜치 push 시 Railway 자동 배포
-```
-
-### ci.yml — PR 자동 검증
-
-```yaml
-name: CI
-
-on:
-  pull_request:
-    branches: [main]
-
-jobs:
-  backend-test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_pass
-          POSTGRES_DB: test_db
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          cd backend
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx
-
-      - name: Run tests
-        env:
-          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_db
-          SECRET_KEY: test-secret-key
-          ALGORITHM: HS256
-        run: |
-          cd backend
-          pytest tests/ -v
-
-  frontend-lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        run: cd frontend && npm ci
-
-      - name: Type check
-        run: cd frontend && npx tsc --noEmit
-
-      - name: Lint
-        run: cd frontend && npm run lint
-```
-
-### cd.yml — main 브랜치 자동 배포
-
-```yaml
-name: CD
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy-backend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to Railway (backend)
-        uses: bervProject/railway-deploy@main
-        with:
-          railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: backend
-
-  deploy-frontend:
-    runs-on: ubuntu-latest
-    needs: deploy-backend   # 백엔드 배포 완료 후 프론트엔드 배포
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to Railway (frontend)
-        uses: bervProject/railway-deploy@main
-        with:
-          railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: frontend
+.github/workflows/   ← 레포 루트에 위치 (여기만 GitHub이 인식)
+├── ci.yml     ← main/develope push/PR 시 pytest + vitest 자동 실행
+└── cd.yml     ← main push 시 테스트 통과 후 Fly.io + Vercel 자동 배포
 ```
 
 ### GitHub Secrets 설정
 
-| Secret | 값 | 설정 위치 |
-|--------|---|----------|
-| `RAILWAY_TOKEN` | Railway 계정 토큰 | GitHub repo Settings → Secrets |
+| Secret | 설명 |
+|--------|------|
+| `FLY_API_TOKEN` | Fly.io 배포 토큰 |
+| `VERCEL_TOKEN` | Vercel 배포 토큰 |
+| `VERCEL_ORG_ID` | Vercel User ID |
+| `VERCEL_PROJECT_ID` | Vercel Project ID |
 
-> Railway 토큰: Railway 대시보드 → Account Settings → Tokens에서 발급
-
-### 브랜치 전략
-
-```
-main   ← 프로덕션 (직접 push 금지, PR만 허용)
-dev    ← 개발 통합 브랜치
-feat/* ← 기능 개발 브랜치
-
-흐름: feat/xxx → PR → CI 통과 → dev 머지 → PR → main → CD 자동 배포
-```
-
-### Branch Protection Rules (GitHub 설정)
-
-main 브랜치에 다음을 설정합니다:
-- `Require pull request reviews` — 직접 push 방지
-- `Require status checks` — CI 통과 필수
-- `Require branches to be up to date` — 최신 상태 유지
-
-### 흔한 실수
-
-| 실수 | 결과 | 해결 |
-|------|------|------|
-| RAILWAY_TOKEN을 코드에 하드코딩 | 토큰 노출 | 반드시 GitHub Secrets 사용 |
-| CI 없이 main에 직접 push | 깨진 코드 배포 | Branch Protection Rules 설정 |
-| 프론트보다 백엔드 배포 순서 늦춤 | API 불일치 | `needs: deploy-backend` |
-| 테스트 DB를 프로덕션 DB로 사용 | 데이터 오염 | CI 전용 postgres service 사용 |
+### 테스트 환경
+- 백엔드: SQLite in-memory DB (Docker/PostgreSQL 없이 pytest 실행)
+- 이메일 발송: conftest.py에서 `send_verification_email` monkeypatch로 mock
+- 프론트엔드: vitest (jsdom)
 
 ---
 
@@ -440,11 +318,12 @@ const useWebSocket = (url: string) => {
 | 단계 | 내용 | 상태 |
 |------|------|------|
 | 1단계 | 서비스 정의 | ✅ 완료 |
-| 2단계 | 전체 시스템 아키텍처 | ✅ 완료 (승인 대기) |
-| 3단계 | 프론트엔드 구조 설계 | ✅ 완료 (승인 대기) |
-| 4단계 | 백엔드 구조 설계 | ✅ 완료 (승인 대기) |
-| 5단계 | DB 및 데이터 흐름 설계 | ✅ 완료 (승인 대기) |
-| 6단계 | Docker 환경 구성 | ✅ 완료 (승인 대기) |
-| 7단계 | Railway 배포 전략 | ✅ 완료 (승인 대기) |
-| 8단계 | CI/CD 자동화 | ✅ 완료 (승인 대기) |
-| 9단계 | 운영 고려사항 | ✅ 완료 (승인 대기) |
+| 2단계 | 전체 시스템 아키텍처 | ✅ 완료 |
+| 3단계 | 프론트엔드 구조 설계 | ✅ 완료 |
+| 4단계 | 백엔드 구조 설계 | ✅ 완료 |
+| 5단계 | DB 및 데이터 흐름 설계 | ✅ 완료 |
+| 6단계 | Docker 환경 구성 | ✅ 완료 |
+| 7단계 | Fly.io + Supabase + Vercel 배포 | ✅ 완료 (2026-05-24) |
+| 8단계 | CI/CD (GitHub Actions) | ✅ 완료 (2026-05-24) |
+| 9단계 | Rate limiting + soft_reserve 중복 방지 | ✅ 완료 (2026-05-24) |
+| 10단계 | 한양대 이메일 인증 (hanyang.ac.kr + Resend) | ✅ 완료 (2026-05-25) |
