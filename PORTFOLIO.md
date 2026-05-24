@@ -1,6 +1,6 @@
 # AI 주도 개발 사례 — 포트폴리오
 
-> 작성일: 2026-05-23
+> 작성일: 2026-05-23 (최종 업데이트: 2026-05-25)
 > 프로젝트: 기숙사 세탁기 예약 서비스 (ESG) + EDK 키오스크 (ic-pbl)
 
 ---
@@ -40,7 +40,7 @@
 직접 요구사항을 정의하고, AI에게 각 단계별 설계를 작성하도록 지시했습니다.
 단순히 출력을 수용한 게 아니라, 매 단계마다 검토하고 방향을 수정했습니다.
 
-**9단계 설계 과정:**
+**10단계 설계 과정:**
 
 | 단계 | 내용 | 주요 결정 |
 |------|------|---------|
@@ -106,11 +106,35 @@ class ConnectionManager:
         # gender 기반 채널 분리
 ```
 
-#### 프로토타입 인증 방식
+#### 인증 범위 결정 — 초기 → 실서비스
 
-JWT 기반 인증을 설계했으나, 프로토타입 단계에서는 구현 복잡도가 높다고 판단했습니다.
-"성별 선택 화면 + localStorage 저장"으로 대체하는 결정을 직접 내렸고,
-이 결정을 AI에게 설계에 반영하도록 지시했습니다.
+초기에는 프로토타입 단계에서 복잡도를 낮추기 위해 "성별 선택 + localStorage 저장"으로 인증을 대체했습니다.
+이후 실제 서비스로 발전시키면서 JWT 인증을 도입하고, 추가로 1인 1계정 제한이 필요하다는 것을 판단했습니다.
+
+**인증 방식 후보 검토:**
+
+| 방식 | 장점 | 단점 | 결정 |
+|------|------|------|------|
+| Kakao OAuth | 구현 간단 | 학교 구성원 제한 불가 | 탈락 |
+| 학교 SSO | 확실한 학교 인증 | API 접근 불가 | 탈락 |
+| 학교 이메일 도메인 제한 | 무료, 구현 가능 | 졸업생도 사용 가능 (감수) | **채택** |
+
+`@hanyang.ac.kr` 도메인 검증 + Resend로 6자리 OTP 발송. 인증 전 로그인 차단(403).
+이 결정으로 Kakao Developer 등록 없이 학교 구성원 제한이 가능해졌습니다.
+
+#### 무료 배포 스택 전환 결정
+
+Railway가 2024년 무료 플랜을 종료했다는 것을 확인하고, 배포 전략을 전면 재검토했습니다.
+AI에게 역할별 무료 대안을 분석하도록 지시하고, 세 가지 플랫폼으로 분산하는 결정을 직접 내렸습니다.
+
+| 역할 | Railway (기존) | 변경 후 | 이유 |
+|------|---------------|---------|------|
+| Backend | Railway | Fly.io | WebSocket 상시 가동 필요, Docker 네이티브 |
+| Database | Railway PostgreSQL | Supabase | 무료 500MB, 별도 관리 용이 |
+| Frontend | Railway | Vercel | 정적 파일 배포 특화, CDN 자동 |
+
+**Fly.io 선택 근거**: `auto_stop_machines = false` 설정으로 WebSocket 연결 끊김 방지.
+Render 대안도 검토했으나 15분 비활성 시 슬립 → WebSocket 재연결 문제로 탈락.
 
 #### Lazy expiration 채택
 
@@ -169,6 +193,9 @@ AI가 못하는 것:
 - AI가 "정보 제공 서비스"로 설계 → 결제 시스템 제거 → 직접 발견하고 수정
 - AI가 3~7단계를 완료된 것처럼 기록 → 원본 대조 후 수정
 - AI가 승인 없이 여러 단계를 한꺼번에 진행 → 협업 규칙 수립으로 해결
+- Fly.io가 monorepo 구조를 인식 못함 → 루트에 Dockerfile 직접 작성 (project/backend 경로 명시)
+- GitHub Actions 워크플로우를 `project/.github/workflows/`에 위치 → 루트로 이동해야 인식됨
+- Vercel CLI `working-directory` + 프로젝트 Root Directory 설정 중복 → 경로 이중 적용 오류 → `working-directory` 제거로 해결
 
 ---
 
@@ -184,10 +211,13 @@ task-management-repository/   ← 메타-리포 (문서/태스크 관리)
 └── tasks/                    ← backlog / in-progress / done
 
 ESG/                          ← 세탁기 예약 서비스 코드
+├── fly.toml                  ← Fly.io 배포 설정
+├── Dockerfile                ← project/backend 경로 참조
+├── .github/workflows/        ← ci.yml + cd.yml (루트에 위치해야 GitHub이 인식)
 └── project/
-    ├── design_progress.md    ← 1~9단계 설계 전체
-    ├── backend/              ← FastAPI
-    └── frontend/             ← React + TypeScript
+    ├── design_progress.md    ← 1~10단계 설계 전체
+    ├── backend/              ← FastAPI (Supabase PostgreSQL 연결)
+    └── frontend/             ← React + TypeScript (Vercel 배포)
 
 pmg-ic-pbl/                   ← EDK 키오스크 코드
 └── project/
