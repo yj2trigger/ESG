@@ -8,6 +8,11 @@ export interface TokenResponse {
   role: string
 }
 
+export interface RegisterResponse {
+  message: string
+  email: string
+}
+
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
@@ -19,8 +24,12 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return data
 }
 
-export function register(username: string, password: string, gender: string): Promise<TokenResponse> {
-  return postJson('/auth/register', { username, password, gender })
+export function register(username: string, password: string, gender: string, email: string): Promise<RegisterResponse> {
+  return postJson('/auth/register', { username, password, gender, email })
+}
+
+export function verifyEmail(email: string, code: string): Promise<TokenResponse> {
+  return postJson('/auth/verify-email', { email, code })
 }
 
 export function login(username: string, password: string): Promise<TokenResponse> {

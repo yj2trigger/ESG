@@ -17,6 +17,10 @@ os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 from app.core.limiter import limiter
 limiter.limit = lambda *args, **kwargs: lambda func: func
 
+# Disable email sending in all tests
+import app.services.auth_service as _auth_service
+_auth_service.send_verification_email = lambda email, code: None
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -85,6 +89,17 @@ def seeded_client(db):
 
 
 def register_and_login(client, username: str = "user1", gender: str = "male") -> str:
-    """Helper: register + return Bearer token."""
-    res = client.post("/auth/register", json={"username": username, "password": "pass1234", "gender": gender})
+    """Helper: register + verify email + return Bearer token."""
+    email = f"{username}@hanyang.ac.kr"
+    client.post("/auth/register", json={"username": username, "password": "pass1234", "gender": gender, "email": email})
+
+    from app.models.email_verification import EmailVerification
+    db_session = TestingSessionLocal()
+    try:
+        v = db_session.query(EmailVerification).filter(EmailVerification.email == email).first()
+        code = v.code if v else "000000"
+    finally:
+        db_session.close()
+
+    res = client.post("/auth/verify-email", json={"email": email, "code": code})
     return res.json()["access_token"]

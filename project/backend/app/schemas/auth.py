@@ -8,6 +8,7 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     gender: Gender
+    email: str
 
     @field_validator("username")
     @classmethod
@@ -22,6 +23,23 @@ class RegisterRequest(BaseModel):
         if len(v) < 4:
             raise ValueError("비밀번호는 4자 이상이어야 합니다")
         return v
+
+    @field_validator("email")
+    @classmethod
+    def email_must_be_hanyang(cls, v: str) -> str:
+        if not v.lower().endswith("@hanyang.ac.kr"):
+            raise ValueError("한양대학교 이메일(@hanyang.ac.kr)만 가능합니다")
+        return v.lower()
+
+
+class RegisterResponse(BaseModel):
+    message: str
+    email: str
+
+
+class VerifyEmailRequest(BaseModel):
+    email: str
+    code: str
 
 
 class LoginRequest(BaseModel):

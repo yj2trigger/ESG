@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
 import GenderSelectPage from './pages/GenderSelectPage'
 import LoginPage from './pages/LoginPage'
+import VerifyEmailPage from './pages/VerifyEmailPage'
 import DashboardPage from './pages/DashboardPage'
 
 function App() {
@@ -36,6 +37,12 @@ function App() {
             ? <DashboardPage />
             : <Navigate to={gender ? '/login' : '/gender'} replace />
         }
+      />
+
+      {/* 이메일 인증 — 회원가입 후 */}
+      <Route
+        path="/verify-email"
+        element={user ? <Navigate to="/" replace /> : <VerifyEmailPage />}
       />
 
       <Route path="*" element={<Navigate to="/" replace />} />

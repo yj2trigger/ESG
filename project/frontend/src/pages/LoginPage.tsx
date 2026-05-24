@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [tab, setTab] = useState<Tab>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -24,18 +25,20 @@ export default function LoginPage() {
     setError(null)
     setLoading(true)
     try {
-      const res = tab === 'register'
-        ? await register(username, password, gender ?? 'male')
-        : await login(username, password)
-
-      const user: AuthUser = {
-        token: res.access_token,
-        username: res.username,
-        gender: res.gender as Gender,
-        role: res.role as 'user' | 'admin',
+      if (tab === 'register') {
+        const res = await register(username, password, gender ?? 'male', email)
+        navigate(`/verify-email?email=${encodeURIComponent(res.email)}`, { replace: true })
+      } else {
+        const res = await login(username, password)
+        const user: AuthUser = {
+          token: res.access_token,
+          username: res.username,
+          gender: res.gender as Gender,
+          role: res.role as 'user' | 'admin',
+        }
+        setUser(user)
+        navigate('/', { replace: true })
       }
-      setUser(user)
-      navigate('/', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : '오류가 발생했습니다')
     } finally {
@@ -86,6 +89,17 @@ export default function LoginPage() {
           required
           autoComplete={tab === 'register' ? 'new-password' : 'current-password'}
         />
+
+        {tab === 'register' && (
+          <input
+            style={styles.input}
+            type="email"
+            placeholder="한양대 이메일 (@hanyang.ac.kr)"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+        )}
 
         {error && <p style={styles.error}>{error}</p>}
 
