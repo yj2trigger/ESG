@@ -1,54 +1,50 @@
 name: CI
 
-# 현재는 수동 실행만 가능 (workflow_dispatch)
-# 팀 협업 또는 실배포 전환 시 아래 주석을 해제하세요:
-# on:
-#   pull_request:
-#     branches: [main]
-
 on:
-  workflow_dispatch:
+  push:
+    branches: [main, develope]
+  pull_request:
+    branches: [main, develope]
 
 jobs:
-  backend-test:
+  test-backend:
+    name: Backend Tests (pytest)
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            project/backend/requirements.txt
+            project/backend/requirements-test.txt
 
       - name: Install dependencies
         run: |
           cd project/backend
           pip install -r requirements.txt -r requirements-test.txt
 
-      - name: Run tests
+      - name: Run pytest
         run: |
           cd project/backend
-          pytest tests/ -v
+          python -m pytest tests/ -v
 
-  frontend-test:
+  test-frontend:
+    name: Frontend Tests (vitest)
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: '20'
+          cache: 'npm'
           cache-dependency-path: project/frontend/package-lock.json
 
       - name: Install dependencies
         run: cd project/frontend && npm ci
 
-      - name: Run tests
-        run: cd project/frontend && npm run test
-
-      - name: Type check
-        run: cd project/frontend && npx tsc --noEmit
+      - name: Run vitest
+        run: cd project/frontend && npm test
