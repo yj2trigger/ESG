@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     cors_origins: str = "http://localhost:5173"
     resend_api_key: str = ""
+    gmail_user: str = ""
+    gmail_app_password: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}  # type: ignore[misc]
 
