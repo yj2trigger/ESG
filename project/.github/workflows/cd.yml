@@ -5,13 +5,20 @@ on:
     branches: [main]
 
 # 사전 설정 필요:
-# GitHub → Settings → Secrets → RAILWAY_TOKEN (Railway 프로젝트 토큰)
-# GitHub → Settings → Variables → RAILWAY_BACKEND_SERVICE (Railway 백엔드 서비스 이름)
-# GitHub → Settings → Variables → RAILWAY_FRONTEND_SERVICE (Railway 프론트엔드 서비스 이름)
-# Railway → 각 서비스 → Settings → Root Directory 설정 (backend/, frontend/)
-# Railway → frontend 서비스 환경변수:
-#   VITE_API_URL=https://<백엔드-Railway-URL>
-#   VITE_WS_URL=wss://<백엔드-Railway-URL>
+# GitHub → Settings → Secrets:
+#   FLY_API_TOKEN     — fly.io 토큰 (fly tokens create deploy)
+#   VERCEL_TOKEN      — Vercel 토큰 (vercel.com → Settings → Tokens)
+#   VERCEL_ORG_ID     — vercel.com → Settings → General → Team ID
+#   VERCEL_PROJECT_ID — .vercel/project.json의 projectId (vercel link 실행 후 확인)
+#
+# Fly.io 환경변수 (fly secrets set 으로 설정):
+#   DATABASE_URL  — Supabase PostgreSQL connection string
+#   SECRET_KEY    — JWT 서명 키 (openssl rand -hex 32)
+#   CORS_ORIGINS  — https://<vercel-domain>.vercel.app
+#
+# Vercel 환경변수 (Vercel 대시보드에서 설정):
+#   VITE_API_URL  — https://<fly-app>.fly.dev
+#   VITE_WS_URL   — wss://<fly-app>.fly.dev
 
 jobs:
   test-backend:
@@ -59,33 +66,37 @@ jobs:
         run: npm test
 
   deploy-backend:
-    name: Deploy Backend → Railway
+    name: Deploy Backend → Fly.io
     needs: [test-backend, test-frontend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
+      - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy backend
         working-directory: backend
-        run: railway up --service ${{ vars.RAILWAY_BACKEND_SERVICE }} --detach
+        run: flyctl deploy --remote-only
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
   deploy-frontend:
-    name: Deploy Frontend → Railway
+    name: Deploy Frontend → Vercel
     needs: [test-backend, test-frontend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
 
       - name: Deploy frontend
         working-directory: frontend
-        run: railway up --service ${{ vars.RAILWAY_FRONTEND_SERVICE }} --detach
+        run: vercel deploy --prod --token ${{ secrets.VERCEL_TOKEN }}
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

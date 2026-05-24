@@ -7,6 +7,7 @@ from app.api.auth import router as auth_router
 from app.api.machines import router as machines_router
 from app.api.queue import router as queue_router
 from app.api.ws import router as ws_router
+from app.config import settings
 from app.core.database import Base, SessionLocal, engine
 from app.repositories import machine_repo
 import app.models  # noqa: F401 — register all models with Base.metadata
@@ -27,7 +28,7 @@ app = FastAPI(title="ESG — 기숙사 세탁기 예약 서비스", lifespan=lif
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=settings.cors_origins.split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
