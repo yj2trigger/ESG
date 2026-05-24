@@ -32,6 +32,10 @@ def request_machine(db: Session, user: User) -> MachineRequestResponse:
     # Lazy-expire stale soft_reserved machines before mode check
     machine_repo.release_expired(db)
 
+    existing = machine_repo.get_active_reserve(db, user.id)
+    if existing:
+        raise HTTPException(status_code=409, detail="이미 예약 중인 세탁기가 있습니다")
+
     mode = get_current_mode(db, user.gender)
     if mode != "B":
         raise HTTPException(status_code=400, detail=f"현재 Mode {mode}입니다. Mode B에서만 사용 가능합니다")

@@ -1,8 +1,9 @@
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.core.limiter import limiter
 from app.core.ws_manager import manager
 from app.models.user import User
 from app.schemas.machine import MachineRequestResponse, MachinesResponse
@@ -20,7 +21,9 @@ def get_machines(
 
 
 @router.post("/request", response_model=MachineRequestResponse)
+@limiter.limit("3/minute")
 async def request_machine(
+    request: Request,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

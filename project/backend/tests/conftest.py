@@ -13,6 +13,10 @@ docker-compose 없이 로컬에서 바로 실행 가능합니다.
 import os
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 
+# Disable rate limiting before app modules are imported
+from app.core.limiter import limiter
+limiter.limit = lambda *args, **kwargs: lambda func: func
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

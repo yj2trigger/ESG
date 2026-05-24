@@ -55,6 +55,20 @@ def get_first_available(db: Session, gender: str) -> Machine | None:
     return machines[0] if machines else None
 
 
+def get_active_reserve(db: Session, user_id: int) -> Machine | None:
+    """Return the user's current active (non-expired) soft_reserved machine, if any."""
+    now = datetime.now(timezone.utc)
+    return (
+        db.query(Machine)
+        .filter(
+            Machine.status == "soft_reserved",
+            Machine.reserved_by_user_id == user_id,
+            Machine.reserved_until > now,
+        )
+        .first()
+    )
+
+
 def soft_reserve(db: Session, machine: Machine, user_id: int, duration_minutes: int = 10) -> Machine:
     machine.status = "soft_reserved"
     machine.reserved_by_user_id = user_id
