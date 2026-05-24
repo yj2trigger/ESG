@@ -10,6 +10,9 @@ docker-compose 없이 로컬에서 바로 실행 가능합니다.
     pytest tests/ -v
 """
 
+import os
+os.environ["DATABASE_URL"] = "sqlite:///./test.db"
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -17,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from app.core.database import Base, get_db
 from app.main import app
+from app.repositories import machine_repo
 
 # SQLite in-memory DB (테스트 전용)
 TEST_DATABASE_URL = "sqlite:///./test.db"
@@ -57,3 +61,26 @@ def client(db):
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="function")
+def seeded_client(db):
+    """TestClient with seeded machine data."""
+    machine_repo.seed(db)
+
+    def override_get_db():
+        try:
+            yield db
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+def register_and_login(client, username: str = "user1", gender: str = "male") -> str:
+    """Helper: register + return Bearer token."""
+    res = client.post("/auth/register", json={"username": username, "password": "pass1234", "gender": gender})
+    return res.json()["access_token"]

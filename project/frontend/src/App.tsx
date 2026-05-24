@@ -1,21 +1,43 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
 import GenderSelectPage from './pages/GenderSelectPage'
+import LoginPage from './pages/LoginPage'
+import DashboardPage from './pages/DashboardPage'
 
 function App() {
+  const user = useAuthStore((s) => s.user)
   const gender = useAuthStore((s) => s.gender)
 
   return (
     <Routes>
-      <Route path="/gender" element={<GenderSelectPage />} />
+      {/* 성별 선택 — 미로그인 + 성별 미선택 상태의 첫 진입점 */}
+      <Route
+        path="/gender"
+        element={user ? <Navigate to="/" replace /> : <GenderSelectPage />}
+      />
+
+      {/* 로그인/회원가입 — 성별 선택 후 */}
+      <Route
+        path="/login"
+        element={
+          user
+            ? <Navigate to="/" replace />
+            : gender
+              ? <LoginPage />
+              : <Navigate to="/gender" replace />
+        }
+      />
+
+      {/* 메인 — 로그인 필요 */}
       <Route
         path="/"
         element={
-          gender
-            ? <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>메인 화면 (준비 중...)</div>
-            : <Navigate to="/gender" replace />
+          user
+            ? <DashboardPage />
+            : <Navigate to={gender ? '/login' : '/gender'} replace />
         }
       />
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
