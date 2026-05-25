@@ -99,8 +99,8 @@ export default function DashboardPage() {
 
         <ModeBanner mode={data.mode} />
 
-        {data.mode === 'A' && <ModeAView floors={data.floors} />}
-        {data.mode === 'B' && !modeBResult && (
+        {data.mode === 'A' && !queueInfo && <ModeAView floors={data.floors} />}
+        {data.mode === 'B' && !modeBResult && !queueInfo && (
           <ModeBView token={user?.token ?? ''} onAssigned={(res) => { setModeBResult(res); refresh() }} />
         )}
         {(data.mode === 'C' || queueInfo) && (
