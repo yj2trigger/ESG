@@ -6,6 +6,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.api.admin import router as admin_router
+from app.api.iot import router as iot_router
 from app.api.auth import router as auth_router
 from app.api.machines import router as machines_router
 from app.api.queue import router as queue_router
@@ -46,6 +47,7 @@ app.include_router(machines_router)
 app.include_router(queue_router)
 app.include_router(ws_router)
 app.include_router(admin_router)
+app.include_router(iot_router)
 
 
 @app.get("/health")
