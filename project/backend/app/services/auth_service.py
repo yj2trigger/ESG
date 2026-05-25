@@ -1,6 +1,6 @@
 import random
 import string
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status  # noqa: F401
 from sqlalchemy.orm import Session
@@ -23,7 +23,7 @@ def register(db: Session, username: str, password: str, gender: str, email: str)
     user = user_repo.create(db, username, hashed, gender, email)
 
     code = "".join(random.choices(string.digits, k=6))
-    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
     db.query(EmailVerification).filter(EmailVerification.email == email).delete()
     verification = EmailVerification(email=email, code=code, expires_at=expires_at)
@@ -45,7 +45,10 @@ def verify_email(db: Session, email: str, code: str) -> dict:
         raise HTTPException(status_code=400, detail="인증 요청을 찾을 수 없습니다")
     if verification.code != code:
         raise HTTPException(status_code=400, detail="인증 코드가 올바르지 않습니다")
-    if verification.expires_at < datetime.utcnow():
+    exp = verification.expires_at
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="인증 코드가 만료됐습니다. 다시 회원가입해주세요")
 
     user = db.query(user_repo.User).filter(user_repo.User.email == email).first()

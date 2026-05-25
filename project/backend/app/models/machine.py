@@ -22,6 +22,6 @@ class Machine(Base):
         nullable=True,
     )
     reserved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    reserved_until = Column(DateTime, nullable=True)
+    reserved_until = Column(DateTime(timezone=True), nullable=True)
 
     reserved_by = relationship("User", foreign_keys=[reserved_by_user_id])

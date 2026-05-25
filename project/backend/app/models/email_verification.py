@@ -8,4 +8,4 @@ class EmailVerification(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), nullable=False, index=True)
     code = Column(String(6), nullable=False)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
