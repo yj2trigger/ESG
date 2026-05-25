@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+import { authFetch } from './client'
 
 export type MachineStatus = 'available' | 'in_use' | 'soft_reserved' | 'broken'
 
@@ -12,29 +12,14 @@ export interface AdminMachine {
   reserved_until: string | null
 }
 
-export async function adminGetMachines(token: string): Promise<AdminMachine[]> {
-  const res = await fetch(`${API_BASE}/admin/machines`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.detail ?? '요청 실패')
-  return data
+export function adminGetMachines(token: string): Promise<AdminMachine[]> {
+  return authFetch('/admin/machines', token)
 }
 
-export async function adminSetStatus(
-  token: string,
-  machineId: number,
-  status: MachineStatus,
-): Promise<AdminMachine> {
-  const res = await fetch(`${API_BASE}/admin/machines/${machineId}`, {
+export function adminSetStatus(token: string, machineId: number, status: MachineStatus): Promise<AdminMachine> {
+  return authFetch(`/admin/machines/${machineId}`, token, {
     method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.detail ?? '요청 실패')
-  return data
 }

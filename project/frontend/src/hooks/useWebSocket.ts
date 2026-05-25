@@ -3,11 +3,12 @@ import { useEffect, useRef } from 'react'
 const WS_BASE = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000'
 
 export interface WsMessage {
-  type: 'machines_updated' | 'queue_notify' | 'queue_position_updated'
+  type: 'machines_updated' | 'queue_offer' | 'queue_offer_expired' | 'queue_position_updated'
   mode?: string
   floors?: unknown[]
   machine?: { id: number; floor: number; machine_number: number }
-  reserved_until?: string
+  accept_until?: string
+  message?: string
   position?: number
   total?: number
 }

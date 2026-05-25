@@ -1,22 +1,32 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useMachineStore } from '../store/machineStore'
 import { getMachines, requestMachine, MachineRequestResponse } from '../api/machines'
-import { joinQueue, leaveQueue, getQueueStatus, QueueJoinResponse } from '../api/queue'
+import { joinQueue, leaveQueue, getQueueStatus, acceptQueueOffer, QueueJoinResponse } from '../api/queue'
 import { useWebSocket, WsMessage } from '../hooks/useWebSocket'
 import { MachineMode, FloorSummary, MachineDetail } from '../types/machine'
 
 const GENDER_LABEL: Record<string, string> = { male: '남성', female: '여성' }
 
+interface PendingOffer {
+  machine: MachineDetail
+  accept_until: string // ISO string, 5 min window
+}
+
+interface ActiveReservation {
+  machine: MachineDetail
+  reserved_until: string // ISO string, 10 min window
+}
+
 export default function DashboardPage() {
   const user = useAuthStore((s) => s.user)
   const navigate = useNavigate()
   const { data, loading, error, setData, setLoading, setError } = useMachineStore()
-  const [queueAlert, setQueueAlert] = useState<{ machine: MachineDetail; reserved_until: string } | null>(null)
-  const [modeBResult, setModeBResult] = useState<MachineRequestResponse | null>(null)
-  const [queueInfo, setQueueInfo] = useState<QueueJoinResponse | null>(null)
 
+  const [pendingOffer, setPendingOffer] = useState<PendingOffer | null>(null)
+  const [activeReservation, setActiveReservation] = useState<ActiveReservation | null>(null)
+  const [queueInfo, setQueueInfo] = useState<QueueJoinResponse | null>(null)
   const [liveQueuePos, setLiveQueuePos] = useState<number | null>(null)
   const [liveQueueTotal, setLiveQueueTotal] = useState<number | null>(null)
 
@@ -36,9 +46,22 @@ export default function DashboardPage() {
   useWebSocket(token, (msg: WsMessage) => {
     if (msg.type === 'machines_updated') {
       refresh()
-    } else if (msg.type === 'queue_notify' && msg.machine && msg.reserved_until) {
-      setQueueAlert({ machine: msg.machine as MachineDetail, reserved_until: msg.reserved_until })
+    } else if (msg.type === 'queue_offer' && msg.machine && msg.accept_until) {
+      setPendingOffer({
+        machine: msg.machine as MachineDetail,
+        accept_until: msg.accept_until,
+      })
       setQueueInfo(null)
+    } else if (msg.type === 'queue_offer_expired') {
+      setPendingOffer(null)
+      // Re-fetch queue status to show updated position
+      if (token) {
+        getQueueStatus(token).then((status) => {
+          if (status.in_queue && status.queue_position != null && status.total != null) {
+            setQueueInfo({ queue_position: status.queue_position, total: status.total, message: '' })
+          }
+        }).catch(() => {})
+      }
     } else if (msg.type === 'queue_position_updated' && msg.position != null) {
       setLiveQueuePos(msg.position as number)
       setLiveQueueTotal(msg.total as number)
@@ -56,6 +79,15 @@ export default function DashboardPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
+
+  // Auto-clear activeReservation when reserved_until passes
+  useEffect(() => {
+    if (!activeReservation) return
+    const ms = new Date(activeReservation.reserved_until).getTime() - Date.now()
+    if (ms <= 0) { setActiveReservation(null); return }
+    const t = setTimeout(() => setActiveReservation(null), ms)
+    return () => clearTimeout(t)
+  }, [activeReservation])
 
   if (loading && !data) return <Screen><p>불러오는 중...</p></Screen>
   if (error && !data) return <Screen><p style={{ color: '#c00' }}>{error}</p><button style={styles.refreshBtn} onClick={refresh}>다시 시도</button></Screen>
@@ -75,37 +107,41 @@ export default function DashboardPage() {
       </header>
 
       <main style={styles.main}>
-        {queueAlert && (
-          <div style={styles.queueAlert}>
-            <strong>세탁기가 배정되었습니다!</strong>
-            <span>{queueAlert.machine.floor}층 {queueAlert.machine.machine_number}번</span>
-            <span style={{ fontSize: '0.8rem', color: '#555' }}>
-              {new Date(queueAlert.reserved_until).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}까지 10분 소프트 예약
-            </span>
-            <button style={styles.alertClose} onClick={() => setQueueAlert(null)}>확인</button>
-          </div>
+        {/* 5분 수락 대기 배너 */}
+        {pendingOffer && (
+          <PendingOfferBanner
+            offer={pendingOffer}
+            token={token ?? ''}
+            onAccepted={(res) => {
+              setPendingOffer(null)
+              setActiveReservation({ machine: res.assigned_machine, reserved_until: res.reserved_until })
+              refresh()
+            }}
+            onExpired={() => setPendingOffer(null)}
+          />
         )}
 
-        {modeBResult && (
-          <div style={styles.queueAlert}>
-            <strong>세탁기가 배정되었습니다!</strong>
-            <span>{modeBResult.assigned_machine.floor}층 {modeBResult.assigned_machine.machine_number}번</span>
-            <span style={{ fontSize: '0.8rem', color: '#555' }}>
-              {new Date(modeBResult.reserved_until).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}까지 10분 소프트 예약 (미사용 시 자동 해제)
-            </span>
-            <button style={styles.alertClose} onClick={() => setModeBResult(null)}>확인</button>
-          </div>
+        {/* 소프트 예약 확정 배너 (10분 동안 유지) */}
+        {activeReservation && (
+          <ActiveReservationBanner reservation={activeReservation} />
         )}
 
         <ModeBanner mode={data.mode} />
 
-        {data.mode === 'A' && !queueInfo && <ModeAView floors={data.floors} />}
-        {data.mode === 'B' && !modeBResult && !queueInfo && (
-          <ModeBView token={user?.token ?? ''} onAssigned={(res) => { setModeBResult(res); refresh() }} />
+        {data.mode === 'A' && !queueInfo && !pendingOffer && <ModeAView floors={data.floors} />}
+        {data.mode === 'B' && !activeReservation && !queueInfo && !pendingOffer && (
+          <ModeBView
+            token={user?.token ?? ''}
+            onAssigned={(res) => {
+              setActiveReservation({ machine: res.assigned_machine, reserved_until: res.reserved_until })
+              refresh()
+            }}
+          />
         )}
-        {(data.mode === 'C' || queueInfo) && (
+        {(data.mode === 'C' || queueInfo) && !pendingOffer && (
           <ModeCView
             token={user?.token ?? ''}
+            username={user?.username ?? ''}
             onDone={refresh}
             livePosition={liveQueuePos}
             liveTotal={liveQueueTotal}
@@ -116,6 +152,115 @@ export default function DashboardPage() {
 
         <button style={styles.refreshBtn} onClick={refresh}>새로고침</button>
       </main>
+    </div>
+  )
+}
+
+// ── PendingOfferBanner ────────────────────────────────────────
+
+function PendingOfferBanner({
+  offer,
+  token,
+  onAccepted,
+  onExpired,
+}: {
+  offer: PendingOffer
+  token: string
+  onAccepted: (res: MachineRequestResponse) => void
+  onExpired: () => void
+}) {
+  const [secsLeft, setSecsLeft] = useState(() => {
+    const ms = new Date(offer.accept_until).getTime() - Date.now()
+    return Math.max(0, Math.floor(ms / 1000))
+  })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const expiredRef = useRef(false)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const ms = new Date(offer.accept_until).getTime() - Date.now()
+      const secs = Math.max(0, Math.floor(ms / 1000))
+      setSecsLeft(secs)
+      if (secs === 0 && !expiredRef.current) {
+        expiredRef.current = true
+        clearInterval(interval)
+        onExpired()
+      }
+    }, 500)
+    return () => clearInterval(interval)
+  }, [offer.accept_until, onExpired])
+
+  const handleAccept = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await acceptQueueOffer(token)
+      onAccepted(res)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '수락 실패')
+      setLoading(false)
+    }
+  }
+
+  const mins = Math.floor(secsLeft / 60)
+  const secs = secsLeft % 60
+
+  return (
+    <div style={styles.offerBanner}>
+      <strong style={{ fontSize: '1.05rem' }}>세탁기 배정 알림!</strong>
+      <span style={styles.offerMachine}>
+        {offer.machine.floor}층 {offer.machine.machine_number}번
+      </span>
+      <span style={styles.offerTimer}>
+        수락 가능 시간 {mins}:{String(secs).padStart(2, '0')} 남음
+      </span>
+      <p style={{ ...styles.actionNote, color: '#c60' }}>
+        5분 이내로 수락하셔야 합니다. 시간이 지나면 대기열 맨 뒤로 이동됩니다.
+      </p>
+      {error && <p style={styles.errorText}>{error}</p>}
+      <button
+        style={{ ...styles.actionBtn, background: '#2a7' }}
+        onClick={handleAccept}
+        disabled={loading || secsLeft === 0}
+      >
+        {loading ? '수락 중...' : '수락하기'}
+      </button>
+    </div>
+  )
+}
+
+// ── ActiveReservationBanner ───────────────────────────────────
+
+function ActiveReservationBanner({ reservation }: { reservation: ActiveReservation }) {
+  const [secsLeft, setSecsLeft] = useState(() => {
+    const ms = new Date(reservation.reserved_until).getTime() - Date.now()
+    return Math.max(0, Math.floor(ms / 1000))
+  })
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const ms = new Date(reservation.reserved_until).getTime() - Date.now()
+      setSecsLeft(Math.max(0, Math.floor(ms / 1000)))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [reservation.reserved_until])
+
+  const mins = Math.floor(secsLeft / 60)
+  const secs = secsLeft % 60
+
+  return (
+    <div style={styles.reservationBanner}>
+      <strong>세탁기가 배정되었습니다!</strong>
+      <span style={styles.offerMachine}>
+        {reservation.machine.floor}층 {reservation.machine.machine_number}번
+      </span>
+      <span style={styles.offerTimer}>
+        예약 유효 시간 {mins}:{String(secs).padStart(2, '0')} 남음
+      </span>
+      <p style={styles.actionNote}>
+        위 시간 이내에 세탁기를 사용해주세요.<br />시간이 지나면 예약이 자동으로 해제됩니다.
+      </p>
     </div>
   )
 }
@@ -174,12 +319,14 @@ function ModeBView({ token, onAssigned }: { token: string; onAssigned: (res: Mac
 
   return (
     <div style={styles.actionBox}>
-      <p style={styles.actionDesc}>세탁기 1대를 배정해드립니다 (10분 소프트 예약)</p>
+      <p style={styles.actionDesc}>지금 바로 세탁기를 배정받으실 수 있습니다</p>
       {error && <p style={styles.errorText}>{error}</p>}
       <button style={styles.actionBtn} onClick={handleRequest} disabled={loading}>
-        {loading ? '배정 중...' : '사용하시겠습니까?'}
+        {loading ? '배정 중...' : '배정받기'}
       </button>
-      <p style={styles.actionNote}>버튼을 누르면 해당 층과 번호를 안내합니다</p>
+      <p style={styles.actionNote}>
+        배정 후 10분 이내에 세탁기를 찾아가셔야 합니다.<br />시간이 지나면 자동으로 해제됩니다.
+      </p>
     </div>
   )
 }
@@ -188,6 +335,7 @@ function ModeBView({ token, onAssigned }: { token: string; onAssigned: (res: Mac
 
 function ModeCView({
   token,
+  username,
   onDone,
   livePosition,
   liveTotal,
@@ -195,6 +343,7 @@ function ModeCView({
   setQueueInfo,
 }: {
   token: string
+  username: string
   onDone: () => void
   livePosition: number | null
   liveTotal: number | null
@@ -242,8 +391,14 @@ function ModeCView({
         <p style={{ ...styles.resultNote, fontSize: '0.85rem', color: '#666' }}>
           전체 대기 {displayTotal}명
         </p>
-        <p style={styles.resultNote}>자리가 나면 알림을 드립니다 (10분 내 미사용 시 다음 순서로)</p>
-        <button style={{ ...styles.actionBtn, background: '#888', marginTop: '1rem' }} onClick={handleLeave} disabled={loading}>
+        <p style={styles.resultNote}>
+          세탁기가 비면 배정 알림이 옵니다.<br />알림 수신 후 5분 이내로 수락하셔야 합니다.
+        </p>
+        <button
+          style={{ ...styles.actionBtn, background: '#888', marginTop: '1rem' }}
+          onClick={handleLeave}
+          disabled={loading}
+        >
           {loading ? '취소 중...' : '대기 취소'}
         </button>
       </div>
@@ -257,7 +412,11 @@ function ModeCView({
       <button style={styles.actionBtn} onClick={handleJoin} disabled={loading}>
         {loading ? '등록 중...' : '대기열 등록'}
       </button>
-      <p style={styles.actionNote}>자리가 나면 알림을 드립니다 (10분 내 미사용 시 다음 순서로 넘어감)</p>
+      <p style={styles.actionNote}>
+        세탁기가 비면 배정 알림이 옵니다.<br />
+        알림 수신 후 5분 이내로 수락하시면<br />
+        10분동안 <strong>{username}</strong>님에게만 이용 가능하다고 표시됩니다.
+      </p>
     </div>
   )
 }
@@ -300,6 +459,8 @@ const styles: Record<string, React.CSSProperties> = {
   resultNote: { margin: 0, fontSize: '0.8rem', color: '#888' },
   errorText: { color: '#c00', fontSize: '0.875rem', margin: 0 },
   refreshBtn: { marginTop: '1.5rem', display: 'block', padding: '0.5rem 1.5rem', fontSize: '0.875rem', border: '1px solid #ccc', borderRadius: '6px', cursor: 'pointer', background: '#fff' },
-  queueAlert: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem', padding: '1rem 1.5rem', marginBottom: '1rem', background: '#e8f5e9', border: '2px solid #2a7', borderRadius: '10px', textAlign: 'center' },
-  alertClose: { marginTop: '0.5rem', padding: '0.4rem 1.5rem', fontSize: '0.875rem', fontWeight: 600, background: '#2a7', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' },
+  offerBanner: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem', padding: '1.25rem 1.5rem', marginBottom: '1rem', background: '#fff8e1', border: '2px solid #e80', borderRadius: '10px', textAlign: 'center' },
+  reservationBanner: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem', padding: '1.25rem 1.5rem', marginBottom: '1rem', background: '#e8f5e9', border: '2px solid #2a7', borderRadius: '10px', textAlign: 'center' },
+  offerMachine: { fontSize: '1.5rem', fontWeight: 800, color: '#333' },
+  offerTimer: { fontSize: '1rem', fontWeight: 700, color: '#555' },
 }

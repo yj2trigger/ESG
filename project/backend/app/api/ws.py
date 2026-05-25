@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from jose import JWTError
@@ -36,7 +37,6 @@ async def websocket_endpoint(ws: WebSocket, token: str):
 
     db = SessionLocal()
     try:
-        # Send initial dashboard state on connect
         dashboard = get_dashboard(db, gender)
         await ws.send_json({"type": "machines_updated", **dashboard.model_dump()})
     finally:
@@ -44,18 +44,28 @@ async def websocket_endpoint(ws: WebSocket, token: str):
 
     try:
         while True:
-            # Keepalive: receive pings, check for expired reservations + queue notify
             try:
                 await asyncio.wait_for(ws.receive_text(), timeout=30.0)
             except asyncio.TimeoutError:
-                pass  # No message within 30s — still alive, continue loop
+                pass
 
-            # Lazy expiration check + queue notification
             db = SessionLocal()
             try:
                 released = machine_repo.release_expired(db)
-                if released:
+                expired_user_ids = queue_repo.reset_expired_notifications(db, gender)
+
+                for uid in expired_user_ids:
+                    await manager.send_to_user(
+                        uid,
+                        gender,
+                        {"type": "queue_offer_expired", "message": "5분이 경과하여 대기열 맨 뒤로 이동되었습니다"},
+                    )
+
+                if released or expired_user_ids:
                     await _notify_queue_and_broadcast(db, gender)
+                else:
+                    # Still broadcast position updates on every tick in case queue changed
+                    pass
             finally:
                 db.close()
 
@@ -66,32 +76,31 @@ async def websocket_endpoint(ws: WebSocket, token: str):
 
 
 async def _notify_queue_and_broadcast(db: Session, gender: str) -> None:
-    """When machines free up: notify first waiter (if any), then broadcast mode update."""
+    """When machines free up: offer to first waiter (5-min hold), then broadcast mode update."""
     waiter = queue_repo.get_next_waiter(db, gender)
     if waiter:
         machine = machine_repo.get_first_available(db, gender)
         if machine:
-            machine_repo.soft_reserve(db, machine, waiter.user_id)
-            queue_repo.leave(db, waiter.user_id)
+            # 5-min hold so no one else grabs the machine during acceptance window
+            machine_repo.soft_reserve(db, machine, waiter.user_id, duration_minutes=5)
+            entry = queue_repo.set_notified(db, waiter, accept_minutes=5)
             await manager.send_to_user(
                 waiter.user_id,
                 gender,
                 {
-                    "type": "queue_notify",
+                    "type": "queue_offer",
                     "machine": {
                         "id": machine.id,
                         "floor": machine.floor,
                         "machine_number": machine.machine_number,
                     },
-                    "reserved_until": machine.reserved_until.isoformat() if machine.reserved_until else None,
+                    "accept_until": entry.expires_at.isoformat() if entry.expires_at else None,
                 },
             )
 
-    # Broadcast updated dashboard to all in gender channel
     dashboard = get_dashboard(db, gender)
     await manager.broadcast(gender, {"type": "machines_updated", **dashboard.model_dump()})
 
-    # Send each waiting user their updated queue position
     await broadcast_queue_positions(db, gender)
 
 
