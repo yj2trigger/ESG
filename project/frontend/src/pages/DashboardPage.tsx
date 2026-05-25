@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const { data, loading, error, setData, setLoading, setError } = useMachineStore()
   const [queueAlert, setQueueAlert] = useState<{ machine: MachineDetail; reserved_until: string } | null>(null)
   const [modeBResult, setModeBResult] = useState<MachineRequestResponse | null>(null)
+  const [queueInfo, setQueueInfo] = useState<QueueJoinResponse | null>(null)
 
   const [liveQueuePos, setLiveQueuePos] = useState<number | null>(null)
   const [liveQueueTotal, setLiveQueueTotal] = useState<number | null>(null)
@@ -37,6 +38,7 @@ export default function DashboardPage() {
       refresh()
     } else if (msg.type === 'queue_notify' && msg.machine && msg.reserved_until) {
       setQueueAlert({ machine: msg.machine as MachineDetail, reserved_until: msg.reserved_until })
+      setQueueInfo(null)
     } else if (msg.type === 'queue_position_updated' && msg.position != null) {
       setLiveQueuePos(msg.position as number)
       setLiveQueueTotal(msg.total as number)
@@ -45,6 +47,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     refresh()
+    if (token) {
+      getQueueStatus(token).then((status) => {
+        if (status.in_queue && status.queue_position != null && status.total != null) {
+          setQueueInfo({ queue_position: status.queue_position, total: status.total, message: '' })
+        }
+      }).catch(() => {})
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
@@ -94,12 +103,14 @@ export default function DashboardPage() {
         {data.mode === 'B' && !modeBResult && (
           <ModeBView token={user?.token ?? ''} onAssigned={(res) => { setModeBResult(res); refresh() }} />
         )}
-        {data.mode === 'C' && (
+        {(data.mode === 'C' || queueInfo) && (
           <ModeCView
             token={user?.token ?? ''}
             onDone={refresh}
             livePosition={liveQueuePos}
             liveTotal={liveQueueTotal}
+            queueInfo={queueInfo}
+            setQueueInfo={setQueueInfo}
           />
         )}
 
@@ -180,24 +191,18 @@ function ModeCView({
   onDone,
   livePosition,
   liveTotal,
+  queueInfo,
+  setQueueInfo,
 }: {
   token: string
   onDone: () => void
   livePosition: number | null
   liveTotal: number | null
+  queueInfo: QueueJoinResponse | null
+  setQueueInfo: (v: QueueJoinResponse | null) => void
 }) {
-  const [queueInfo, setQueueInfo] = useState<QueueJoinResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    getQueueStatus(token).then((status) => {
-      if (status.in_queue && status.queue_position != null && status.total != null) {
-        setQueueInfo({ queue_position: status.queue_position, total: status.total, message: '' })
-      }
-    }).catch(() => {})
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const handleJoin = async () => {
     setLoading(true)
