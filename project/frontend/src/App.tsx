@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
 import GenderSelectPage from './pages/GenderSelectPage'
@@ -8,6 +9,18 @@ import DashboardPage from './pages/DashboardPage'
 function App() {
   const user = useAuthStore((s) => s.user)
   const gender = useAuthStore((s) => s.gender)
+
+  useEffect(() => {
+    const requestFs = () => {
+      const el = document.documentElement as HTMLElement & {
+        webkitRequestFullscreen?: () => Promise<void>
+      }
+      const fn = el.requestFullscreen ?? el.webkitRequestFullscreen
+      if (fn) fn.call(el).catch(() => {})
+    }
+    document.addEventListener('touchstart', requestFs, { once: true })
+    return () => document.removeEventListener('touchstart', requestFs)
+  }, [])
 
   return (
     <Routes>

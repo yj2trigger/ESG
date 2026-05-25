@@ -14,6 +14,9 @@ export default function DashboardPage() {
   const { data, loading, error, setData, setLoading, setError } = useMachineStore()
   const [queueAlert, setQueueAlert] = useState<{ machine: MachineDetail; reserved_until: string } | null>(null)
 
+  const [liveQueuePos, setLiveQueuePos] = useState<number | null>(null)
+  const [liveQueueTotal, setLiveQueueTotal] = useState<number | null>(null)
+
   const token = user?.token ?? null
 
   const refresh = async () => {
@@ -32,6 +35,9 @@ export default function DashboardPage() {
       refresh()
     } else if (msg.type === 'queue_notify' && msg.machine && msg.reserved_until) {
       setQueueAlert({ machine: msg.machine as MachineDetail, reserved_until: msg.reserved_until })
+    } else if (msg.type === 'queue_position_updated' && msg.position != null) {
+      setLiveQueuePos(msg.position as number)
+      setLiveQueueTotal(msg.total as number)
     }
   })
 
@@ -70,7 +76,14 @@ export default function DashboardPage() {
 
         {data.mode === 'A' && <ModeAView floors={data.floors} />}
         {data.mode === 'B' && <ModeBView token={user?.token ?? ''} onDone={refresh} />}
-        {data.mode === 'C' && <ModeCView token={user?.token ?? ''} onDone={refresh} />}
+        {data.mode === 'C' && (
+          <ModeCView
+            token={user?.token ?? ''}
+            onDone={refresh}
+            livePosition={liveQueuePos}
+            liveTotal={liveQueueTotal}
+          />
+        )}
 
         <button style={styles.refreshBtn} onClick={refresh}>새로고침</button>
       </main>
@@ -157,7 +170,17 @@ function ModeBView({ token, onDone }: { token: string; onDone: () => void }) {
 
 // ── Mode C ───────────────────────────────────────────────────
 
-function ModeCView({ token, onDone }: { token: string; onDone: () => void }) {
+function ModeCView({
+  token,
+  onDone,
+  livePosition,
+  liveTotal,
+}: {
+  token: string
+  onDone: () => void
+  livePosition: number | null
+  liveTotal: number | null
+}) {
   const [queueInfo, setQueueInfo] = useState<QueueJoinResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -191,10 +214,15 @@ function ModeCView({ token, onDone }: { token: string; onDone: () => void }) {
   }
 
   if (queueInfo) {
+    const displayPos = livePosition ?? queueInfo.queue_position
+    const displayTotal = liveTotal ?? queueInfo.total
     return (
       <div style={styles.resultBox}>
         <p style={styles.resultTitle}>대기열에 등록되었습니다</p>
-        <p style={styles.resultBig}>현재 {queueInfo.queue_position}번째</p>
+        <p style={styles.resultBig}>현재 {displayPos}번째</p>
+        <p style={{ ...styles.resultNote, fontSize: '0.85rem', color: '#666' }}>
+          전체 대기 {displayTotal}명
+        </p>
         <p style={styles.resultNote}>자리가 나면 알림을 드립니다 (10분 내 미사용 시 다음 순서로)</p>
         <button style={{ ...styles.actionBtn, background: '#888', marginTop: '1rem' }} onClick={handleLeave} disabled={loading}>
           {loading ? '취소 중...' : '대기 취소'}

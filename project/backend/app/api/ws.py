@@ -90,3 +90,17 @@ async def _notify_queue_and_broadcast(db: Session, gender: str) -> None:
     # Broadcast updated dashboard to all in gender channel
     dashboard = get_dashboard(db, gender)
     await manager.broadcast(gender, {"type": "machines_updated", **dashboard.model_dump()})
+
+    # Send each waiting user their updated queue position
+    await broadcast_queue_positions(db, gender)
+
+
+async def broadcast_queue_positions(db: Session, gender: str) -> None:
+    all_waiting = queue_repo.get_all_waiting(db, gender)
+    total = len(all_waiting)
+    for i, entry in enumerate(all_waiting):
+        await manager.send_to_user(
+            entry.user_id,
+            gender,
+            {"type": "queue_position_updated", "position": i + 1, "total": total},
+        )

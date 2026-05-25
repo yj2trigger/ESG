@@ -14,7 +14,8 @@ def join_queue(db: Session, user: User) -> QueueJoinResponse:
 
     entry = queue_repo.join(db, user.id, user.gender)
     position = queue_repo.get_position(db, entry.user_id, user.gender)
-    return QueueJoinResponse(queue_position=position, message="대기열에 등록되었습니다")
+    total = queue_repo.count_waiting(db, user.gender)
+    return QueueJoinResponse(queue_position=position, total=total, message="대기열에 등록되었습니다")
 
 
 def leave_queue(db: Session, user: User) -> QueueLeaveResponse:

@@ -51,3 +51,20 @@ def get_next_waiter(db: Session, gender: str) -> QueueEntry | None:
         .order_by(QueueEntry.created_at)
         .first()
     )
+
+
+def get_all_waiting(db: Session, gender: str) -> list[QueueEntry]:
+    return (
+        db.query(QueueEntry)
+        .filter(QueueEntry.gender == gender, QueueEntry.status == "waiting")
+        .order_by(QueueEntry.created_at)
+        .all()
+    )
+
+
+def count_waiting(db: Session, gender: str) -> int:
+    return (
+        db.query(QueueEntry)
+        .filter(QueueEntry.gender == gender, QueueEntry.status == "waiting")
+        .count()
+    )

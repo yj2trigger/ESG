@@ -7,6 +7,7 @@ from app.core.ws_manager import manager
 from app.models.user import User
 from app.schemas.queue import QueueJoinResponse, QueueLeaveResponse
 from app.services import machine_service, queue_service
+from app.api.ws import broadcast_queue_positions
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 
@@ -40,4 +41,5 @@ async def leave_queue(
         current_user.gender,
         {"type": "machines_updated", **dashboard.model_dump()},
     )
+    await broadcast_queue_positions(db, current_user.gender)
     return result
