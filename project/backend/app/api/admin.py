@@ -1,7 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
+from app.core.database import SessionLocal, get_db
 from app.core.dependencies import get_admin_user
 from app.core.ws_manager import manager
 from app.models.user import User
@@ -10,6 +10,24 @@ from app.schemas.machine import MachineAdminItem, MachineStatusUpdate
 from app.services.machine_service import get_dashboard
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+async def _notify_gender(gender: str) -> None:
+    from app.api.ws import _notify_queue_and_broadcast
+    db = SessionLocal()
+    try:
+        await _notify_queue_and_broadcast(db, gender)
+    finally:
+        db.close()
+
+
+async def _broadcast_gender(gender: str) -> None:
+    db = SessionLocal()
+    try:
+        dashboard = get_dashboard(db, gender)
+        await manager.broadcast(gender, {"type": "machines_updated", **dashboard.model_dump()})
+    finally:
+        db.close()
 
 
 @router.get("/machines", response_model=list[MachineAdminItem])
@@ -34,10 +52,13 @@ async def update_machine_status(
     updated = machine_repo.set_status(db, machine, body.status)
 
     gender = machine.gender_restriction
-    for g in (["male", "female"] if gender is None else [gender]):
-        dashboard = get_dashboard(db, g)
-        background_tasks.add_task(
-            manager.broadcast, g, {"type": "machines_updated", **dashboard.model_dump()}
-        )
+    genders = ["male", "female"] if gender is None else [gender]
+
+    if body.status == "available":
+        for g in genders:
+            background_tasks.add_task(_notify_gender, g)
+    else:
+        for g in genders:
+            background_tasks.add_task(_broadcast_gender, g)
 
     return updated
