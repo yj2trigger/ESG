@@ -451,13 +451,7 @@ background_tasks.add_task(_task)
 ```
 
 **Datetime 계약**  
-백엔드 `Machine.reserved_until`은 `DateTime` (timezone 없음) 컬럼이다. 프론트엔드로 직렬화 시 `Z` suffix가 없어 JS가 로컬 시간으로 해석한다. 프론트엔드 전체에서 `asUtc()` 헬퍼로 강제 UTC 파싱:
-```typescript
-// DashboardPage.tsx
-function asUtc(s: string): Date {
-  return new Date(s.endsWith('Z') || s.includes('+') ? s : s + 'Z')
-}
-```
+`Machine.reserved_until`, `EmailVerification.expires_at` 모두 `DateTime(timezone=True)` (TIMESTAMPTZ) 컬럼이다. FastAPI가 직렬화 시 `Z` suffix를 포함한 ISO 8601 UTC 문자열을 반환한다. JS `new Date(str)`로 안전하게 파싱 가능.
 
 **상태 복원 패턴**  
 React state는 새로고침 시 소멸한다. 서버에서 상태가 유지되어야 하는 경우 마운트 시 API로 복원:
@@ -473,14 +467,22 @@ const [res, status] = await Promise.all([getMyReservation(token), getQueueStatus
 
 ```
 main          → 프로덕션 (직접 push 불가, 관리자 제외)
-feature/xxx   → 기능 개발 → PR → CI 통과 + 관리자 승인 → merge
+develop       → 통합 브랜치 (feature PR 대상, CI 필수)
+feature/xxx   → 기능 개발 → PR → develop
+issue/xxx     → 버그 수정 → PR → develop
 ```
+
+- `develop` → `main` PR: 배포 시점에만
+- PR 조건: CI 통과 (Backend Tests + Frontend Tests) + 1명 승인
+- 관리자(owner)는 branch protection bypass 가능
+- 버그 발생 시: issue 등록 → `issue/xxx` 브랜치 → develop PR
 
 ### 환경변수 전체 목록
 
 | 변수 | 필수 | 기본값 | 설명 |
 |------|------|--------|------|
-| `DATABASE_URL` | ✅ | `postgresql://...` | Supabase PostgreSQL 연결 문자열 |
+| `DATABASE_URL` | ✅ | `postgresql://...` | Supabase Direct Connection URL (IPv6) |
+| `SESSION_POOLER` | 권장 | — | Supabase Session Pooler URL (IPv4, 로컬 개발용) — 설정 시 `DATABASE_URL` 대신 사용 |
 | `SECRET_KEY` | ✅ | `dev-secret-key` | JWT 서명 키 (반드시 변경) |
 | `CORS_ORIGINS` | — | `http://localhost:5173` | 허용 오리진 (콤마 구분) |
 | `GMAIL_USER` | 이메일 발송 시 | — | Gmail 계정 |
@@ -489,18 +491,18 @@ feature/xxx   → 기능 개발 → PR → CI 통과 + 관리자 승인 → merg
 
 ---
 
-## Technical Notes (시니어 관점)
+## Technical Notes
 
-**[주의] `datetime.utcnow()` 사용**  
-`app/services/auth_service.py:26,48`에서 Python 3.12 이후 deprecated된 `datetime.utcnow()`를 사용한다. `datetime.now(timezone.utc)`로 교체 필요.
+**[해결됨] `datetime.utcnow()` 폐기**  
+`datetime.now(timezone.utc)`로 전환 완료. 테스트 DB(SQLite)는 `DateTime(timezone=True)` 컬럼에서도 naive datetime을 반환하므로 비교 시 `if exp.tzinfo is None: exp = exp.replace(tzinfo=timezone.utc)` guard 필요.
 
-**[주의] Machine.reserved_until — timezone-naive 컬럼**  
-`Machine.reserved_until`이 `DateTime(timezone=True)` 아닌 `DateTime`으로 선언되어 있다. 이 때문에 프론트엔드에서 `asUtc()` 우회 처리가 필요하다. 컬럼 타입을 `DateTime(timezone=True)`로 변경하면 헬퍼 없이도 해결된다 (마이그레이션 필요).
+**[해결됨] timezone-naive 컬럼**  
+`Machine.reserved_until`, `EmailVerification.expires_at` 모두 `DateTime(timezone=True)`로 변경 완료. Alembic revision `34bcd027b891` Supabase에 적용됨.
 
-**[주의] DB 마이그레이션 없음**  
-`app/main.py:lifespan`에서 `Base.metadata.create_all()`로 테이블을 생성한다. Alembic이 의존성에 포함되어 있지만 마이그레이션 파일이 없다. 컬럼 추가/변경 시 기존 테이블은 수동으로 조작해야 한다.
+**[해결됨] DB 마이그레이션**  
+Alembic 도입 완료 (`alembic/env.py`). 컬럼 변경 시 새 revision 생성 후 `python -m alembic upgrade head` 실행. `SESSION_POOLER` 환경변수로 Supabase Session Pooler 연결.
 
-**[설계] ConnectionManager — 단일 인스턴스 제약**  
+**[주의] ConnectionManager — 단일 인스턴스 제약**  
 `core/ws_manager.py`의 `ConnectionManager`는 in-memory 싱글톤이다. 인스턴스가 2개 이상 실행되면 WebSocket 연결 목록이 분리되어 브로드캐스트가 일부 사용자에게 전달되지 않는다. 현재 Fly.io 설정(`min_machines_running=1`)으로 단일 인스턴스를 유지하지만, 스케일아웃 시 Redis Pub/Sub으로 외부화해야 한다.
 
 **[설계] User.role — String 컬럼**  
