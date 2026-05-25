@@ -14,7 +14,7 @@ function SplashScreen() {
   useEffect(() => {
     const t1 = setTimeout(() => setPhase('hold'), 600)   // fade-in 완료
     const t2 = setTimeout(() => setPhase('out'), 2000)   // fade-out 시작
-    const t3 = setTimeout(() => setPhase('done'), 2700)  // DOM 제거
+    const t3 = setTimeout(() => setPhase('done'), 3800)  // DOM 제거
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
   }, [])
 
@@ -26,7 +26,7 @@ function SplashScreen() {
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       background: '#fff',
       opacity: phase === 'out' ? 0 : 1,
-      transition: phase === 'in' ? 'opacity 0.6s ease' : 'opacity 0.7s ease',
+      transition: phase === 'in' ? 'opacity 0.6s ease' : 'opacity 1.8s ease',
       pointerEvents: 'none',
     }}>
       <p style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, letterSpacing: '-0.5px', color: '#222' }}>
