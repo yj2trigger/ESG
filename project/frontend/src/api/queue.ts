@@ -10,6 +10,12 @@ export interface QueueLeaveResponse {
   message: string
 }
 
+export interface QueueStatusResponse {
+  in_queue: boolean
+  queue_position: number | null
+  total: number | null
+}
+
 async function authFetch<T>(path: string, token: string, method: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method,
@@ -26,4 +32,8 @@ export function joinQueue(token: string): Promise<QueueJoinResponse> {
 
 export function leaveQueue(token: string): Promise<QueueLeaveResponse> {
   return authFetch('/queue/leave', token, 'DELETE')
+}
+
+export function getQueueStatus(token: string): Promise<QueueStatusResponse> {
+  return authFetch('/queue/status', token, 'GET')
 }

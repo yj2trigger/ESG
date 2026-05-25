@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { useMachineStore } from '../store/machineStore'
 import { getMachines, requestMachine, MachineRequestResponse } from '../api/machines'
-import { joinQueue, leaveQueue, QueueJoinResponse } from '../api/queue'
+import { joinQueue, leaveQueue, getQueueStatus, QueueJoinResponse } from '../api/queue'
 import { useWebSocket, WsMessage } from '../hooks/useWebSocket'
 import { MachineMode, FloorSummary, MachineDetail } from '../types/machine'
 
@@ -184,6 +184,15 @@ function ModeCView({
   const [queueInfo, setQueueInfo] = useState<QueueJoinResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    getQueueStatus(token).then((status) => {
+      if (status.in_queue && status.queue_position != null && status.total != null) {
+        setQueueInfo({ queue_position: status.queue_position, total: status.total, message: '' })
+      }
+    }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleJoin = async () => {
     setLoading(true)

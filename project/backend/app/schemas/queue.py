@@ -9,3 +9,9 @@ class QueueJoinResponse(BaseModel):
 
 class QueueLeaveResponse(BaseModel):
     message: str
+
+
+class QueueStatusResponse(BaseModel):
+    in_queue: bool
+    queue_position: int | None = None
+    total: int | None = None
