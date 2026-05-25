@@ -29,11 +29,8 @@ function SplashScreen() {
       transition: phase === 'in' ? 'opacity 0.6s ease' : 'opacity 1.8s ease',
       pointerEvents: 'none',
     }}>
-      <p style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, letterSpacing: '-0.5px', color: '#222' }}>
-        ESG 세탁기 예약
-      </p>
-      <p style={{ margin: '0.75rem 0 0', fontSize: '0.95rem', color: '#666', textAlign: 'center', lineHeight: 1.6, padding: '0 2rem' }}>
-        실시간 현황 정보를 제공하여<br />세탁기를 더 편리하게 이용할 수 있도록 돕습니다
+      <p style={{ margin: 0, fontSize: '0.95rem', color: '#666', textAlign: 'center', lineHeight: 1.8, padding: '0 2rem' }}>
+        저희는 실시간 세탁기 현황 정보를 제공하여<br />더 편리한 기숙사 생활을 도울 수 있도록 노력합니다
       </p>
     </div>
   )
