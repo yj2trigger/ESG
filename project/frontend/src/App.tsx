@@ -5,6 +5,7 @@ import GenderSelectPage from './pages/GenderSelectPage'
 import LoginPage from './pages/LoginPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 import DashboardPage from './pages/DashboardPage'
+import AdminPage from './pages/AdminPage'
 
 function App() {
   const user = useAuthStore((s) => s.user)
@@ -56,6 +57,11 @@ function App() {
       <Route
         path="/verify-email"
         element={user ? <Navigate to="/" replace /> : <VerifyEmailPage />}
+      />
+
+      <Route
+        path="/admin"
+        element={user?.role === 'admin' ? <AdminPage /> : <Navigate to="/" replace />}
       />
 
       <Route path="*" element={<Navigate to="/" replace />} />

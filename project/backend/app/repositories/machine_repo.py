@@ -7,7 +7,21 @@ from app.models.machine import Machine
 
 
 def get_all(db: Session) -> list[Machine]:
-    return db.query(Machine).all()
+    return db.query(Machine).order_by(Machine.floor, Machine.machine_number).all()
+
+
+def get_by_id(db: Session, machine_id: int) -> Machine | None:
+    return db.query(Machine).filter(Machine.id == machine_id).first()
+
+
+def set_status(db: Session, machine: Machine, new_status: str) -> Machine:
+    machine.status = new_status
+    if new_status == "available":
+        machine.reserved_by_user_id = None
+        machine.reserved_until = None
+    db.commit()
+    db.refresh(machine)
+    return machine
 
 
 def count_available(db: Session, gender: str) -> int:

@@ -30,3 +30,19 @@ class MachinesResponse(BaseModel):
 class MachineRequestResponse(BaseModel):
     assigned_machine: MachineDetail
     reserved_until: datetime
+
+
+class MachineAdminItem(BaseModel):
+    id: int
+    floor: int
+    machine_number: int
+    status: MachineStatus
+    gender_restriction: Optional[str]
+    reserved_by_user_id: Optional[int]
+    reserved_until: Optional[datetime]
+
+    model_config = {"from_attributes": True}
+
+
+class MachineStatusUpdate(BaseModel):
+    status: MachineStatus
