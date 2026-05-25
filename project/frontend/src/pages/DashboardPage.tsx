@@ -14,6 +14,7 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const { data, loading, error, setData, setLoading, setError } = useMachineStore()
   const [queueAlert, setQueueAlert] = useState<{ machine: MachineDetail; reserved_until: string } | null>(null)
+  const [modeBResult, setModeBResult] = useState<MachineRequestResponse | null>(null)
 
   const [liveQueuePos, setLiveQueuePos] = useState<number | null>(null)
   const [liveQueueTotal, setLiveQueueTotal] = useState<number | null>(null)
@@ -76,10 +77,23 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {modeBResult && (
+          <div style={styles.queueAlert}>
+            <strong>세탁기가 배정되었습니다!</strong>
+            <span>{modeBResult.assigned_machine.floor}층 {modeBResult.assigned_machine.machine_number}번</span>
+            <span style={{ fontSize: '0.8rem', color: '#555' }}>
+              {new Date(modeBResult.reserved_until).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}까지 10분 소프트 예약 (미사용 시 자동 해제)
+            </span>
+            <button style={styles.alertClose} onClick={() => setModeBResult(null)}>확인</button>
+          </div>
+        )}
+
         <ModeBanner mode={data.mode} />
 
         {data.mode === 'A' && <ModeAView floors={data.floors} />}
-        {data.mode === 'B' && <ModeBView token={user?.token ?? ''} onDone={refresh} />}
+        {data.mode === 'B' && !modeBResult && (
+          <ModeBView token={user?.token ?? ''} onAssigned={(res) => { setModeBResult(res); refresh() }} />
+        )}
         {data.mode === 'C' && (
           <ModeCView
             token={user?.token ?? ''}
@@ -130,8 +144,7 @@ function ModeAView({ floors }: { floors: FloorSummary[] }) {
 
 // ── Mode B ───────────────────────────────────────────────────
 
-function ModeBView({ token, onDone }: { token: string; onDone: () => void }) {
-  const [result, setResult] = useState<MachineRequestResponse | null>(null)
+function ModeBView({ token, onAssigned }: { token: string; onAssigned: (res: MachineRequestResponse) => void }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -140,24 +153,12 @@ function ModeBView({ token, onDone }: { token: string; onDone: () => void }) {
     setError(null)
     try {
       const res = await requestMachine(token)
-      setResult(res)
-      onDone()
+      onAssigned(res)
     } catch (e) {
       setError(e instanceof Error ? e.message : '오류 발생')
     } finally {
       setLoading(false)
     }
-  }
-
-  if (result) {
-    const until = new Date(result.reserved_until).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
-    return (
-      <div style={styles.resultBox}>
-        <p style={styles.resultTitle}>세탁기가 배정되었습니다</p>
-        <p style={styles.resultBig}>{result.assigned_machine.floor}층 {result.assigned_machine.machine_number}번</p>
-        <p style={styles.resultNote}>{until}까지 10분 소프트 예약 (미사용 시 자동 해제)</p>
-      </div>
-    )
   }
 
   return (
