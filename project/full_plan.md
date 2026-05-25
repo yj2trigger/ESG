@@ -1,6 +1,7 @@
 # 기숙사 세탁기 예약 서비스 — 전체 설계 문서
 
-> 기술 스택: React + TypeScript / FastAPI / PostgreSQL / Docker / Railway
+> 기술 스택: React + TypeScript / FastAPI / PostgreSQL / Docker
+> 배포: Fly.io (백엔드) + Supabase (DB) + Vercel (프론트엔드)
 
 ---
 
@@ -104,21 +105,23 @@ soft_reserve(machine_id, user_id, duration=10min)
         │
         │ HTTP (REST) + WebSocket
         ▼
-[React + TypeScript]  ← 프론트엔드
+[React + TypeScript]  ← 프론트엔드 (Vercel)
         │
         │ HTTPS
         ▼
-[FastAPI]             ← 백엔드 API + WebSocket 서버
-   ├── Auth (JWT)
+[FastAPI]             ← 백엔드 API + WebSocket 서버 (Fly.io)
+   ├── Auth (JWT + 이메일 인증)
    ├── Machine API
    ├── Queue Manager
-   └── Notification Service
+   ├── Admin API
+   └── IoT Signal API
         │
-        ├── PostgreSQL  ← 영구 데이터 (유저, 세탁기, 대기열)
+        ├── PostgreSQL (Supabase) ← 영구 데이터 (유저, 세탁기, 대기열)
         │
-        └── (더미데이터 레이어) ← IoT 연결 전까지
+        └── IoT 장치 (추후 연결)
+              └── POST /iot/machines/{id}/status
 
-[GitHub Actions] → [Railway] ← 배포
+[GitHub Actions] → [Fly.io / Vercel] ← 배포
 ```
 
 ### 핵심 기술 선택 결정표
@@ -497,12 +500,19 @@ backend/
 
 | Method | Path | 설명 | 인증 |
 |--------|------|------|------|
-| POST | `/auth/register` | 회원가입 (gender 포함) | 불필요 |
+| POST | `/auth/register` | 회원가입 (@hanyang.ac.kr 이메일 필수) | 불필요 |
+| POST | `/auth/verify-email` | 이메일 OTP 인증 → JWT 반환 | 불필요 |
 | POST | `/auth/login` | 로그인 → JWT 반환 | 불필요 |
+| PATCH | `/auth/password` | 비밀번호 변경 (현재 비번 검증) | 필요 |
+| PATCH | `/auth/username` | 아이디 변경 → 새 JWT 반환 | 필요 |
 | GET | `/machines` | 현재 모드 + 층별 상태 반환 | 필요 |
 | POST | `/machines/request` | Mode B 버튼: 세탁기 1대 배정 요청 | 필요 |
 | POST | `/queue/join` | Mode C 버튼: 대기열 등록 | 필요 |
 | DELETE | `/queue/leave` | 대기열 취소 | 필요 |
+| GET | `/queue/status` | 현재 대기 상태 조회 (페이지 새로고침 복원용) | 필요 |
+| GET | `/admin/machines` | 전체 세탁기 목록 (관리자용) | admin |
+| PATCH | `/admin/machines/{id}` | 세탁기 상태 변경 + 큐 알림 트리거 | admin |
+| POST | `/iot/machines/{id}/status` | IoT 장치 신호 수신 (`is_running` bool) | Device Key |
 | WS | `/ws` | 실시간 연결 | JWT 쿼리 파라미터 |
 
 > WebSocket은 HTTP 헤더를 못 쓰는 경우가 많아 JWT를 URL 쿼리 파라미터로 전달합니다.
@@ -982,99 +992,134 @@ ORDER BY hour;
 | 4단계 | 백엔드 구조 설계 | ✅ 완료 |
 | 5단계 | DB 및 데이터 흐름 설계 | ✅ 완료 |
 | 6단계 | Docker 환경 구성 | ✅ 완료 |
-| 7단계 | Railway 배포 전략 | ✅ 완료 |
-| 8단계 | CI/CD 자동화 | ⏳ 대기 |
-| 9단계 | 운영 고려사항 | ⏳ 대기 |
+| 7단계 | 배포 (Fly.io + Supabase + Vercel) | ✅ 완료 |
+| 8단계 | CI/CD 자동화 (GitHub Actions) | ✅ 완료 |
+| 9단계 | 인증 강화 (이메일 인증, 계정 변경) | ✅ 완료 |
+| 10단계 | 관리자 페이지 | ✅ 완료 |
+| 11단계 | IoT 연동 준비 | ✅ 완료 |
+| 12단계 | PWA / 모바일 최적화 | ✅ 완료 |
 
 ---
 
-## 7단계: Railway 배포 전략
+## 7단계: 배포 전략 (Fly.io + Supabase + Vercel)
 
-### Railway 구성 개요
+### 플랫폼 구성
 
-```
-Railway 프로젝트
-├── frontend   (GitHub 연동 → 자동 빌드/배포)
-├── backend    (GitHub 연동 → 자동 빌드/배포)
-└── PostgreSQL (Railway 플러그인 → 자동 관리)
-```
+| 역할 | 플랫폼 | 이유 |
+|------|--------|------|
+| 백엔드 (FastAPI + WS) | **Fly.io** | WebSocket 장기 연결 지원, Docker 배포 |
+| 데이터베이스 | **Supabase** | PostgreSQL 완전 관리형, 무료 티어 |
+| 프론트엔드 | **Vercel** | React/Vite 자동 빌드, CDN 내장 |
 
-### 플랫폼 선택 이유
-
-| 항목 | Railway | AWS / GCP | Vercel + Render |
-|------|---------|-----------|-----------------|
-| 설정 난이도 | 낮음 | 높음 | 중간 |
-| 비용 (소규모) | 무료 ~ $5 | 예측 어려움 | 무료 ~ |
-| WebSocket 지원 | 지원 | 지원 | Vercel 미지원 |
-| DB 통합 | 내장 | 별도 설정 | 별도 설정 |
-| 결론 | **프로토타입 최적** | 과도함 | WebSocket 때문에 탈락 |
-
-> Vercel은 WebSocket을 지원하지 않으므로 선택지에서 제외됩니다.
+> Railway에서 전환: Fly.io는 WebSocket 장기 연결에 안정적이며, Supabase는 DB 관리 부담 없음.
 
 ### 배포 흐름
 
 ```
-개발자 → git push → GitHub
+개발자 → git push → GitHub (main 브랜치)
                        │
-                       ▼
-              Railway가 변경 감지
-                       │
-              ┌────────┴────────┐
-              ▼                 ▼
-         backend 빌드       frontend 빌드
-         (Dockerfile)       (Dockerfile)
-              │                 │
-              ▼                 ▼
-         백엔드 배포         프론트 배포
+           ┌───────────┴──────────┐
+           ▼                      ▼
+   GitHub Actions CI          Vercel (자동 감지)
+   (test-backend,                  │
+    test-frontend)                 ▼
+           │               프론트엔드 빌드/배포
+           ▼
+   GitHub Actions CD
+   (needs: [test-backend, test-frontend])
+           │
+           ▼
+      fly deploy
+   (백엔드 Docker 빌드 → Fly.io 배포)
 ```
 
-### 환경변수 설정
+### 환경변수
 
-| 변수명 | 값 위치 |
-|--------|---------|
-| `DATABASE_URL` | Railway PostgreSQL 플러그인이 자동 생성 |
-| `JWT_SECRET` | 직접 입력 (랜덤 긴 문자열) |
-| `FRONTEND_URL` | 배포된 프론트 URL (CORS 설정용) |
+| 변수명 | 위치 | 설명 |
+|--------|------|------|
+| `DATABASE_URL` | Fly.io Secrets | Supabase PostgreSQL URL |
+| `SECRET_KEY` | Fly.io Secrets | JWT 서명 키 |
+| `GMAIL_USER` | Fly.io Secrets | 이메일 인증 발신 계정 |
+| `GMAIL_APP_PASSWORD` | Fly.io Secrets | Gmail 앱 비밀번호 |
+| `IOT_DEVICE_KEY` | Fly.io Secrets | IoT 장치 인증 키 (미설정 시 /iot 비활성화) |
+| `CORS_ORIGINS` | Fly.io Secrets | Vercel 프론트 URL |
+| `VITE_API_URL` | Vercel Environment | 백엔드 API URL |
 
-### CORS 설정
+### 인증 흐름 (이메일 인증)
 
-```python
-# main.py
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL")],  # 하드코딩 금지
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+```
+회원가입: username + password + gender + email(@hanyang.ac.kr)
+  → 이메일로 6자리 OTP 발송 (Gmail SMTP)
+  → /verify-email 페이지에서 코드 입력
+  → 인증 완료 시 JWT 발급
+로그인: 미인증 계정 → 403 차단
 ```
 
 ### DB 마이그레이션
 
-| 방식 | 설명 | 결론 |
-|------|------|------|
-| `create_all()` 자동 생성 | 앱 시작 시 테이블 없으면 생성 | **프로토타입용** |
-| Alembic 마이그레이션 | 변경 이력 관리, 롤백 가능 | 실서비스용 |
+현재 `create_all()` 방식 사용 (프로토타입). 실서비스 전환 시 Alembic 도입 예정.
 
-### 배포 체크리스트
+### IoT 연동 준비
 
 ```
-□ .env 파일이 .gitignore에 있는지 확인
-□ Railway 프로젝트 생성
-□ PostgreSQL 플러그인 추가
-□ backend 서비스 → GitHub 레포 연결
-□ frontend 서비스 → GitHub 레포 연결
-□ 환경변수 입력 (JWT_SECRET, FRONTEND_URL)
-□ CORS 설정 확인
-□ WebSocket URL: ws:// → wss:// 확인 (HTTPS 환경)
-□ 배포 후 /docs 접속해서 API 동작 확인
+POST /iot/machines/{machine_id}/status
+Header: X-Device-Key: <IOT_DEVICE_KEY>
+Body: {"is_running": true | false}
+
+is_running: true  → in_use + machines_updated 브로드캐스트
+is_running: false → available + _notify_queue_and_broadcast
+                    (대기열 첫 번째 사용자에게 queue_notify)
 ```
 
-### 흔한 실수
+Fly.io 시크릿 설정 후 즉시 연동 가능:
+```
+fly secrets set IOT_DEVICE_KEY=<랜덤값> --app esg-laundry-checker
+```
 
-| 실수 | 결과 | 해결 |
+---
+
+## 구현 완료 기능 현황 (2025-05-25 기준)
+
+### 백엔드
+
+| 기능 | 파일 | 비고 |
 |------|------|------|
-| `ws://` 하드코딩 | 배포 환경에서 연결 실패 | 환경변수로 WebSocket URL 관리 |
-| CORS `allow_origins=["*"]` | 보안 취약점 | 반드시 프론트 URL만 명시 |
-| DB 마이그레이션 없이 배포 | 테이블 없음 오류 | `create_all()` 또는 Alembic |
-| 환경변수 누락 | 런타임 에러 | 배포 전 체크리스트 확인 |
+| 회원가입 + 이메일 OTP 인증 | `api/auth.py`, `services/auth_service.py` | @hanyang.ac.kr 전용 |
+| 이메일 발송 | `core/email.py` | Gmail SMTP (smtplib) |
+| 로그인 (JWT) | `api/auth.py` | 미인증 계정 403 차단 |
+| 비밀번호 변경 | `PATCH /auth/password` | 현재 비번 검증 필수 |
+| 아이디 변경 | `PATCH /auth/username` | 현재 비번 검증 + 새 JWT 발급 |
+| Mode A/B/C 판별 | `services/machine_service.py` | 성별 기준 available 수 |
+| Mode B 소프트 예약 | `POST /machines/request` | 10분 타이머 |
+| Mode C 대기열 | `POST /queue/join`, `DELETE /queue/leave` | PostgreSQL 저장 |
+| 대기열 상태 조회 | `GET /queue/status` | 새로고침 복원용 |
+| 실시간 WebSocket | `api/ws.py` | 성별 채널 분리 |
+| 큐 위치 실시간 업데이트 | `ws.py:broadcast_queue_positions` | queue_position_updated 이벤트 |
+| 소프트예약 만료 자동 해제 | `machine_repo.release_expired` | WS 루프 30초마다 |
+| 관리자 기기 목록/상태변경 | `api/admin.py` | available 전환 시 큐 알림 연동 |
+| IoT 신호 수신 엔드포인트 | `api/iot.py` | X-Device-Key 인증 |
+| GitHub Actions CI/CD | `.github/workflows/` | test → deploy (Fly.io) |
+
+### 프론트엔드
+
+| 기능 | 파일 | 비고 |
+|------|------|------|
+| 성별 선택 페이지 | `GenderSelectPage.tsx` | 첫 진입점 |
+| 로그인/회원가입 | `LoginPage.tsx` | 비밀번호 보기 토글 |
+| 이메일 인증 | `VerifyEmailPage.tsx` | OTP 6자리 입력 |
+| 대시보드 (Mode A/B/C) | `DashboardPage.tsx` | WebSocket 실시간 연동 |
+| Mode B 결과 영속 | `DashboardPage.tsx` | 모드 전환 후에도 배정 결과 유지 |
+| Mode C 대기 영속 | `DashboardPage.tsx` | 모드 전환 후에도 대기 현황 유지 |
+| 큐 위치 실시간 표시 | `DashboardPage.tsx` | queue_position_updated 수신 |
+| 설정 페이지 | `SettingsPage.tsx` | 비번/아이디 변경, 로그아웃 |
+| 관리자 페이지 | `AdminPage.tsx` | 층별 기기 상태 토글 |
+| PWA / 모바일 전체화면 | `App.tsx`, `index.html` | 첫 터치 시 fullscreen 요청 |
+
+### 알려진 제약
+
+| 항목 | 현황 |
+|------|------|
+| `in_use` 자동 해제 | 없음 — 어드민 수동 변경 또는 IoT 연동 필요 |
+| Alembic 마이그레이션 | 미적용 (`create_all()` 사용 중) |
+| PWA 백그라운드 알림 | 미구현 (앱 열려 있어야 WS 수신 가능) |
+| IoT 실제 연동 | 엔드포인트 준비 완료, 장치 연결 대기 중 |
