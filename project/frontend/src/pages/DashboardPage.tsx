@@ -270,7 +270,7 @@ const styles: Record<string, React.CSSProperties> = {
   headerTitle: { fontWeight: 700, fontSize: '1.1rem', flex: 1 },
   userInfo: { fontSize: '0.875rem', color: '#555' },
   logoutBtn: { padding: '0.35rem 0.85rem', fontSize: '0.8rem', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', background: '#fff' },
-  main: { flex: 1, padding: '1.5rem', maxWidth: '600px', margin: '0 auto', width: '100%' },
+  main: { flex: 1, padding: '1.5rem', maxWidth: '600px', margin: '0 auto', width: '100%', boxSizing: 'border-box' },
   modeBanner: { border: '2px solid', borderRadius: '10px', padding: '1rem 1.25rem', marginBottom: '1.5rem' },
   modeLabel: { fontWeight: 800, fontSize: '1.1rem' },
   modeDesc: { margin: '0.4rem 0 0', fontSize: '0.9rem', color: '#444' },
