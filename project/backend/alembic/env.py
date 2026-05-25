@@ -20,7 +20,7 @@ target_metadata = Base.metadata
 
 from sqlalchemy import create_engine
 
-database_url = os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+database_url = os.environ.get("SESSION_POOLER") or os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
 
 
 def run_migrations_offline() -> None:
