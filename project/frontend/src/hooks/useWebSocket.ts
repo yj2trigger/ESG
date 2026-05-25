@@ -3,11 +3,13 @@ import { useEffect, useRef } from 'react'
 const WS_BASE = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000'
 
 export interface WsMessage {
-  type: 'machines_updated' | 'queue_notify'
+  type: 'machines_updated' | 'queue_notify' | 'queue_position_updated'
   mode?: string
   floors?: unknown[]
   machine?: { id: number; floor: number; machine_number: number }
   reserved_until?: string
+  position?: number
+  total?: number
 }
 
 export function useWebSocket(token: string | null, onMessage: (msg: WsMessage) => void) {
