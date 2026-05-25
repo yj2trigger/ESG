@@ -14,7 +14,7 @@ export default function GenderSelectPage() {
   return (
     <div style={styles.container}>
       <h1 style={styles.title}>성별을 선택해주세요</h1>
-      <p style={styles.subtitle}>세탁기 현황 조회에 사용됩니다</p>
+      <p style={styles.subtitle}>성별에 따라 다른 구역의 세탁기 현황이 표시됩니다</p>
       <div style={styles.buttonGroup}>
         <button style={styles.button} onClick={() => handleSelect('male')}>
           남성

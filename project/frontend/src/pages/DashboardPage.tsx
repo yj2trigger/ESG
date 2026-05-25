@@ -46,8 +46,8 @@ export default function DashboardPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
-  if (loading) return <Screen><p>불러오는 중...</p></Screen>
-  if (error) return <Screen><p style={{ color: '#c00' }}>{error}</p><button style={styles.refreshBtn} onClick={refresh}>다시 시도</button></Screen>
+  if (loading && !data) return <Screen><p>불러오는 중...</p></Screen>
+  if (error && !data) return <Screen><p style={{ color: '#c00' }}>{error}</p><button style={styles.refreshBtn} onClick={refresh}>다시 시도</button></Screen>
   if (!data) return null
 
   return (

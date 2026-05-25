@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [tab, setTab] = useState<Tab>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -80,15 +81,25 @@ export default function LoginPage() {
           required
           autoComplete="username"
         />
-        <input
-          style={styles.input}
-          type="password"
-          placeholder="비밀번호"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          autoComplete={tab === 'register' ? 'new-password' : 'current-password'}
-        />
+        <div style={styles.passwordWrapper}>
+          <input
+            style={{ ...styles.input, flex: 1, border: 'none', outline: 'none', padding: 0 }}
+            type={showPassword ? 'text' : 'password'}
+            placeholder="비밀번호"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoComplete={tab === 'register' ? 'new-password' : 'current-password'}
+          />
+          <button
+            type="button"
+            style={styles.eyeBtn}
+            onClick={() => setShowPassword((v) => !v)}
+            tabIndex={-1}
+          >
+            {showPassword ? '🙈' : '👁'}
+          </button>
+        </div>
 
         {tab === 'register' && (
           <input
@@ -164,6 +175,24 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #ccc',
     borderRadius: '6px',
     outline: 'none',
+  },
+  passwordWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '0.75rem 1rem',
+    fontSize: '1rem',
+    border: '1px solid #ccc',
+    borderRadius: '6px',
+    gap: '0.5rem',
+  },
+  eyeBtn: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '1rem',
+    padding: 0,
+    lineHeight: 1,
+    flexShrink: 0,
   },
   submit: {
     padding: '0.875rem',
