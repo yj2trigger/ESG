@@ -102,14 +102,18 @@ export default function LoginPage() {
         </div>
 
         {tab === 'register' && (
-          <input
-            style={styles.input}
-            type="email"
-            placeholder="한양대 이메일 (@hanyang.ac.kr)"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+          <>
+            <input
+              style={styles.input}
+              type="email"
+              placeholder="한양대 이메일 (@hanyang.ac.kr)"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+            <p style={styles.hint}>한양대학교 이메일(@hanyang.ac.kr)만 가입 가능합니다. 입력한 이메일로 인증 코드가 발송됩니다.</p>
+          </>
+
         )}
 
         {error && <p style={styles.error}>{error}</p>}
@@ -209,5 +213,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.875rem',
     margin: 0,
     textAlign: 'center',
+  },
+  hint: {
+    fontSize: '0.78rem',
+    color: '#888',
+    margin: 0,
+    lineHeight: 1.5,
   },
 }
