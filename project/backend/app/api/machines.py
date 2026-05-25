@@ -6,7 +6,8 @@ from app.core.dependencies import get_current_user
 from app.core.limiter import limiter
 from app.core.ws_manager import manager
 from app.models.user import User
-from app.schemas.machine import MachineRequestResponse, MachinesResponse
+from app.repositories import machine_repo
+from app.schemas.machine import MachineDetail, MachineRequestResponse, MachinesResponse, MyReservationResponse
 from app.services import machine_service
 
 router = APIRouter(prefix="/machines", tags=["machines"])
@@ -18,6 +19,25 @@ def get_machines(
     db: Session = Depends(get_db),
 ):
     return machine_service.get_dashboard(db, current_user.gender)
+
+
+@router.get("/my-reservation", response_model=MyReservationResponse)
+def get_my_reservation(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    machine = machine_repo.get_active_reserve(db, current_user.id)
+    if not machine:
+        return MyReservationResponse(active=False)
+    return MyReservationResponse(
+        active=True,
+        assigned_machine=MachineDetail(
+            id=machine.id,
+            floor=machine.floor,
+            machine_number=machine.machine_number,
+        ),
+        reserved_until=machine.reserved_until,
+    )
 
 
 @router.post("/request", response_model=MachineRequestResponse)

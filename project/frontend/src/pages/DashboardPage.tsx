@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useMachineStore } from '../store/machineStore'
-import { getMachines, requestMachine, MachineRequestResponse } from '../api/machines'
+import { getMachines, requestMachine, getMyReservation, MachineRequestResponse } from '../api/machines'
 import { joinQueue, leaveQueue, getQueueStatus, acceptQueueOffer, QueueJoinResponse } from '../api/queue'
 import { useWebSocket, WsMessage } from '../hooks/useWebSocket'
 import { MachineMode, FloorSummary, MachineDetail } from '../types/machine'
@@ -70,13 +70,21 @@ export default function DashboardPage() {
 
   useEffect(() => {
     refresh()
-    if (token) {
-      getQueueStatus(token).then((status) => {
-        if (status.in_queue && status.queue_position != null && status.total != null) {
-          setQueueInfo({ queue_position: status.queue_position, total: status.total, message: '' })
-        }
-      }).catch(() => {})
-    }
+    if (!token) return
+
+    // 소프트 예약 복원 (새로고침 후에도 유지)
+    getMyReservation(token).then((res) => {
+      if (res.active && res.assigned_machine && res.reserved_until) {
+        setActiveReservation({ machine: res.assigned_machine, reserved_until: res.reserved_until })
+      }
+    }).catch(() => {})
+
+    // 대기열 상태 복원
+    getQueueStatus(token).then((status) => {
+      if (status.in_queue && status.queue_position != null && status.total != null) {
+        setQueueInfo({ queue_position: status.queue_position, total: status.total, message: '' })
+      }
+    }).catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 

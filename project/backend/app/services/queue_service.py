@@ -2,12 +2,15 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.user import User
-from app.repositories import queue_repo
+from app.repositories import machine_repo, queue_repo
 from app.schemas.queue import QueueJoinResponse, QueueLeaveResponse
 from app.services.machine_service import get_current_mode
 
 
 def join_queue(db: Session, user: User) -> QueueJoinResponse:
+    if machine_repo.get_active_reserve(db, user.id):
+        raise HTTPException(status_code=400, detail="이미 예약 중인 세탁기가 있습니다. 예약을 사용하신 후 대기열에 등록해주세요")
+
     mode = get_current_mode(db, user.gender)
     if mode != "C":
         raise HTTPException(status_code=400, detail=f"현재 Mode {mode}입니다. Mode C에서만 대기열 등록이 가능합니다")

@@ -3,6 +3,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
+
+
 MachineMode = Literal["A", "B", "C"]
 MachineStatus = Literal["available", "in_use", "soft_reserved", "broken"]
 
@@ -46,3 +48,9 @@ class MachineAdminItem(BaseModel):
 
 class MachineStatusUpdate(BaseModel):
     status: MachineStatus
+
+
+class MyReservationResponse(BaseModel):
+    active: bool
+    assigned_machine: Optional[MachineDetail] = None
+    reserved_until: Optional[datetime] = None
