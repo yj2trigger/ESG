@@ -9,6 +9,11 @@ import { MachineMode, FloorSummary, MachineDetail } from '../types/machine'
 
 const GENDER_LABEL: Record<string, string> = { male: '남성', female: '여성' }
 
+// 백엔드 datetime 컬럼이 timezone 없이 직렬화됨 → JS가 로컬시간 해석 → UTC로 강제
+function asUtc(s: string): Date {
+  return new Date(s.endsWith('Z') || s.includes('+') ? s : s + 'Z')
+}
+
 interface PendingOffer {
   machine: MachineDetail
   accept_until: string // ISO string, 5 min window
@@ -91,7 +96,7 @@ export default function DashboardPage() {
   // Auto-clear activeReservation when reserved_until passes
   useEffect(() => {
     if (!activeReservation) return
-    const ms = new Date(activeReservation.reserved_until).getTime() - Date.now()
+    const ms = asUtc(activeReservation.reserved_until).getTime() - Date.now()
     if (ms <= 0) { setActiveReservation(null); return }
     const t = setTimeout(() => setActiveReservation(null), ms)
     return () => clearTimeout(t)
@@ -178,7 +183,7 @@ function PendingOfferBanner({
   onExpired: () => void
 }) {
   const [secsLeft, setSecsLeft] = useState(() => {
-    const ms = new Date(offer.accept_until).getTime() - Date.now()
+    const ms = asUtc(offer.accept_until).getTime() - Date.now()
     return Math.max(0, Math.floor(ms / 1000))
   })
   const [loading, setLoading] = useState(false)
@@ -187,7 +192,7 @@ function PendingOfferBanner({
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const ms = new Date(offer.accept_until).getTime() - Date.now()
+      const ms = asUtc(offer.accept_until).getTime() - Date.now()
       const secs = Math.max(0, Math.floor(ms / 1000))
       setSecsLeft(secs)
       if (secs === 0 && !expiredRef.current) {
@@ -242,13 +247,13 @@ function PendingOfferBanner({
 
 function ActiveReservationBanner({ reservation }: { reservation: ActiveReservation }) {
   const [secsLeft, setSecsLeft] = useState(() => {
-    const ms = new Date(reservation.reserved_until).getTime() - Date.now()
+    const ms = asUtc(reservation.reserved_until).getTime() - Date.now()
     return Math.max(0, Math.floor(ms / 1000))
   })
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const ms = new Date(reservation.reserved_until).getTime() - Date.now()
+      const ms = asUtc(reservation.reserved_until).getTime() - Date.now()
       setSecsLeft(Math.max(0, Math.floor(ms / 1000)))
     }, 1000)
     return () => clearInterval(interval)

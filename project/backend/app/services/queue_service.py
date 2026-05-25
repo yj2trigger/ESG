@@ -9,7 +9,7 @@ from app.services.machine_service import get_current_mode
 
 def join_queue(db: Session, user: User) -> QueueJoinResponse:
     if machine_repo.get_active_reserve(db, user.id):
-        raise HTTPException(status_code=400, detail="이미 예약 중인 세탁기가 있습니다. 예약을 사용하신 후 대기열에 등록해주세요")
+        raise HTTPException(status_code=400, detail="이미 예약 중인 세탁기가 있습니다. 예약된 세탁기를 이용해주세요")
 
     mode = get_current_mode(db, user.gender)
     if mode != "C":
