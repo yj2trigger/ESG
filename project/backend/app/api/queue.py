@@ -19,9 +19,11 @@ def get_queue_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    entry = queue_repo.get_waiting_entry(db, current_user.id)
+    entry = queue_repo.get_entry(db, current_user.id)
     if not entry:
         return QueueStatusResponse(in_queue=False)
+    if entry.status == "notified":
+        return QueueStatusResponse(in_queue=True, is_notified=True, accept_until=entry.expires_at)
     position = queue_repo.get_position(db, current_user.id, current_user.gender)
     total = queue_repo.count_waiting(db, current_user.gender)
     return QueueStatusResponse(in_queue=True, queue_position=position, total=total)

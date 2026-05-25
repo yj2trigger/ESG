@@ -15,6 +15,8 @@ export interface QueueStatusResponse {
   in_queue: boolean
   queue_position: number | null
   total: number | null
+  is_notified: boolean
+  accept_until: string | null
 }
 
 export function joinQueue(token: string): Promise<QueueJoinResponse> {

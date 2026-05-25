@@ -77,16 +77,16 @@ export default function DashboardPage() {
     refresh()
     if (!token) return
 
-    // 소프트 예약 복원 (새로고침 후에도 유지)
-    getMyReservation(token).then((res) => {
-      if (res.active && res.assigned_machine && res.reserved_until) {
+    // 소프트 예약 + 대기열 상태 복원 (병렬)
+    Promise.all([getMyReservation(token), getQueueStatus(token)]).then(([res, status]) => {
+      if (status.in_queue && status.is_notified && status.accept_until && res.active && res.assigned_machine) {
+        // 5분 수락 대기 중
+        setPendingOffer({ machine: res.assigned_machine, accept_until: status.accept_until })
+      } else if (res.active && res.assigned_machine && res.reserved_until) {
+        // 10분 확정 예약 중
         setActiveReservation({ machine: res.assigned_machine, reserved_until: res.reserved_until })
-      }
-    }).catch(() => {})
-
-    // 대기열 상태 복원
-    getQueueStatus(token).then((status) => {
-      if (status.in_queue && status.queue_position != null && status.total != null) {
+      } else if (status.in_queue && status.queue_position != null && status.total != null) {
+        // 대기열 대기 중
         setQueueInfo({ queue_position: status.queue_position, total: status.total, message: '' })
       }
     }).catch(() => {})
