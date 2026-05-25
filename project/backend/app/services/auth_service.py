@@ -2,7 +2,7 @@ import random
 import string
 from datetime import datetime, timedelta
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status  # noqa: F401
 from sqlalchemy.orm import Session
 
 from app.core.email import send_verification_email
@@ -56,6 +56,24 @@ def verify_email(db: Session, email: str, code: str) -> dict:
     db.delete(verification)
     db.commit()
 
+    token = create_access_token({"sub": user.username, "gender": user.gender, "role": user.role})
+    return {"access_token": token, "token_type": "bearer", "username": user.username, "gender": user.gender, "role": user.role}
+
+
+def change_password(db: Session, user, current_password: str, new_password: str) -> None:
+    if not verify_password(current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="현재 비밀번호가 틀렸습니다")
+    user.password_hash = hash_password(new_password)
+    db.commit()
+
+
+def change_username(db: Session, user, current_password: str, new_username: str) -> dict:
+    if not verify_password(current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="현재 비밀번호가 틀렸습니다")
+    if user_repo.get_by_username(db, new_username):
+        raise HTTPException(status_code=400, detail="이미 사용 중인 사용자명입니다")
+    user.username = new_username
+    db.commit()
     token = create_access_token({"sub": user.username, "gender": user.gender, "role": user.role})
     return {"access_token": token, "token_type": "bearer", "username": user.username, "gender": user.gender, "role": user.role}
 

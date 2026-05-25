@@ -62,6 +62,7 @@ export default function DashboardPage() {
         {user?.role === 'admin' && (
           <button style={styles.adminBtn} onClick={() => navigate('/admin')}>관리</button>
         )}
+        <button style={styles.settingsBtn} onClick={() => navigate('/settings')}>설정</button>
         <button style={styles.logoutBtn} onClick={logout}>로그아웃</button>
       </header>
 
@@ -275,6 +276,7 @@ const styles: Record<string, React.CSSProperties> = {
   headerTitle: { fontWeight: 700, fontSize: '1.1rem', flex: 1 },
   userInfo: { fontSize: '0.875rem', color: '#555' },
   logoutBtn: { padding: '0.35rem 0.85rem', fontSize: '0.8rem', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', background: '#fff' },
+  settingsBtn: { padding: '0.35rem 0.85rem', fontSize: '0.8rem', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', background: '#fff' },
   adminBtn: { padding: '0.35rem 0.85rem', fontSize: '0.8rem', border: '1px solid #555', borderRadius: '4px', cursor: 'pointer', background: '#333', color: '#fff' },
   main: { flex: 1, padding: '1.5rem', maxWidth: '600px', margin: '0 auto', width: '100%', boxSizing: 'border-box' },
   modeBanner: { border: '2px solid', borderRadius: '10px', padding: '1rem 1.25rem', marginBottom: '1.5rem' },

@@ -53,3 +53,27 @@ class TokenResponse(BaseModel):
     username: str
     gender: str
     role: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def new_password_min_length(cls, v: str) -> str:
+        if len(v) < 4:
+            raise ValueError("비밀번호는 4자 이상이어야 합니다")
+        return v
+
+
+class ChangeUsernameRequest(BaseModel):
+    current_password: str
+    new_username: str
+
+    @field_validator("new_username")
+    @classmethod
+    def new_username_min_length(cls, v: str) -> str:
+        if len(v) < 2:
+            raise ValueError("사용자명은 2자 이상이어야 합니다")
+        return v

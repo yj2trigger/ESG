@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 import DashboardPage from './pages/DashboardPage'
 import AdminPage from './pages/AdminPage'
+import SettingsPage from './pages/SettingsPage'
 
 function App() {
   const user = useAuthStore((s) => s.user)
@@ -62,6 +63,11 @@ function App() {
       <Route
         path="/admin"
         element={user?.role === 'admin' ? <AdminPage /> : <Navigate to="/" replace />}
+      />
+
+      <Route
+        path="/settings"
+        element={user ? <SettingsPage /> : <Navigate to={gender ? '/login' : '/gender'} replace />}
       />
 
       <Route path="*" element={<Navigate to="/" replace />} />
