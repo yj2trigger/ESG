@@ -15,6 +15,11 @@ def get_by_id(db: Session, machine_id: int) -> Machine | None:
 
 
 def set_status(db: Session, machine: Machine, new_status: str) -> Machine:
+    # 세탁기가 실제 사용 중으로 전환 시 해당 사용자의 대기열 항목 제거
+    if new_status == "in_use" and machine.reserved_by_user_id:
+        from app.repositories.queue_repo import leave
+        leave(db, machine.reserved_by_user_id)
+
     machine.status = new_status
     if new_status == "available":
         machine.reserved_by_user_id = None
