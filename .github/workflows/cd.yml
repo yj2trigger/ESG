@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   test-backend:
@@ -52,6 +52,7 @@ jobs:
   deploy-backend:
     name: Deploy Backend → Fly.io
     needs: [test-backend, test-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +67,7 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend → Vercel
     needs: [test-backend, test-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
