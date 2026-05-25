@@ -466,16 +466,14 @@ const [res, status] = await Promise.all([getMyReservation(token), getQueueStatus
 ### 브랜치 전략
 
 ```
-main          → 프로덕션 (직접 push 불가, 관리자 제외)
-develop       → 통합 브랜치 (feature PR 대상, CI 필수)
-feature/xxx   → 기능 개발 → PR → develop
-issue/xxx     → 버그 수정 → PR → develop
+main          → 프로덕션
+feature/xxx   → 기능 개발 → PR → main
+issue/xxx     → 버그 수정 → PR → main
 ```
 
-- `develop` → `main` PR: 배포 시점에만
 - PR 조건: CI 통과 (Backend Tests + Frontend Tests) + 1명 승인
 - 관리자(owner)는 branch protection bypass 가능
-- 버그 발생 시: issue 등록 → `issue/xxx` 브랜치 → develop PR
+- 버그 발생 시: issue 등록 → `issue/xxx` 브랜치 → main PR
 
 ### 환경변수 전체 목록
 
