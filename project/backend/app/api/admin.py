@@ -5,7 +5,7 @@ from app.core.database import SessionLocal, get_db
 from app.core.dependencies import get_admin_user
 from app.core.ws_manager import manager
 from app.models.user import User
-from app.repositories import machine_repo
+from app.repositories import machine_repo, machine_status_log_repo
 from app.schemas.machine import MachineAdminItem, MachineStatusUpdate
 from app.services.machine_service import get_dashboard
 
@@ -49,7 +49,18 @@ async def update_machine_status(
     machine = machine_repo.get_by_id(db, machine_id)
     if not machine:
         raise HTTPException(status_code=404, detail="머신을 찾을 수 없습니다")
+
+    previous_status = machine.status
+    changed = previous_status != body.status
     updated = machine_repo.set_status(db, machine, body.status)
+    machine_status_log_repo.create(
+        db,
+        machine,
+        body.status,
+        "admin",
+        previous_status=previous_status,
+        changed=changed,
+    )
 
     gender = machine.gender_restriction
     genders = ["male", "female"] if gender is None else [gender]
