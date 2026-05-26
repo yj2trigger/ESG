@@ -39,10 +39,11 @@ class MachineStatusLog(Base):
     machine_id = Column(Integer, ForeignKey("machines.id", ondelete="CASCADE"), nullable=False, index=True)
     previous_status = Column(String(32), nullable=True)
     status = Column(String(32), nullable=False)
+    changed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     source = Column(String(32), nullable=False, default="iot")
     is_running = Column(Boolean, nullable=True)
     changed = Column(Boolean, nullable=False, default=False)
-    recorded_at = Column(
+    changed_at = Column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
@@ -50,3 +51,4 @@ class MachineStatusLog(Base):
     )
 
     machine = relationship("Machine", back_populates="status_logs")
+    changed_by = relationship("User", foreign_keys=[changed_by_user_id])

@@ -43,7 +43,7 @@ async def update_machine_status(
     machine_id: int,
     body: MachineStatusUpdate,
     background_tasks: BackgroundTasks,
-    _: User = Depends(get_admin_user),
+    admin_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db),
 ):
     machine = machine_repo.get_by_id(db, machine_id)
@@ -59,6 +59,7 @@ async def update_machine_status(
         body.status,
         "admin",
         previous_status=previous_status,
+        changed_by_user_id=admin_user.id,
         changed=changed,
     )
 
