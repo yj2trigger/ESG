@@ -1,4 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, get_db
@@ -10,6 +11,10 @@ from app.schemas.machine import MachineAdminItem, MachineStatusUpdate
 from app.services.machine_service import get_dashboard
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+class SettingsUpdate(BaseModel):
+    power_threshold_w: float
 
 
 async def _notify_gender(gender: str) -> None:
@@ -85,3 +90,16 @@ def get_power_history(
 ):
     logs = machine_power_log_repo.get_history(db, machine_id, hours=hours)
     return [{"timestamp": log.recorded_at.isoformat(), "power_w": log.power_w} for log in logs]
+
+
+@router.get("/settings")
+def get_settings(_: User = Depends(get_admin_user)):
+    from app.services import smartthings_poller
+    return {"power_threshold_w": smartthings_poller.power_threshold_w}
+
+
+@router.patch("/settings")
+def update_settings(body: SettingsUpdate, _: User = Depends(get_admin_user)):
+    from app.services import smartthings_poller
+    smartthings_poller.power_threshold_w = body.power_threshold_w
+    return {"power_threshold_w": smartthings_poller.power_threshold_w}

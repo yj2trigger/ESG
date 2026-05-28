@@ -13,10 +13,7 @@ class Settings(BaseSettings):
     iot_device_key: str = ""
 
     smartthings_pat: str = ""
-    smartthings_device_id: str = ""  # fallback single device
-    smartthings_machine_id: int = 1  # fallback single machine id
-    smartthings_device_map: str = ""  # "machine_id:st_device_id,..." e.g. "1:7c805ce1-..."
-    power_threshold_w: float = 100.0  # W 이상이면 세탁기 가동 중으로 판정
+    power_threshold_w: float = 100.0  # fly.toml [env]에서 설정, 런타임 변경은 PATCH /admin/settings
 
     model_config = {"env_file": ".env", "extra": "ignore"}  # type: ignore[misc]
 

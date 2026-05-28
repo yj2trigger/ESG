@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -11,21 +12,24 @@ from app.services.machine_service import get_current_mode
 
 logger = logging.getLogger(__name__)
 
+power_threshold_w: float = settings.power_threshold_w  # admin API로 런타임 변경 가능
+
 _last_states: dict[int, bool] = {}
 _last_cleanup: float = 0.0
 
 
 def _parse_device_map() -> dict[int, str]:
+    """SMARTTHINGS_DEVICE_01, SMARTTHINGS_DEVICE_02 형식 환경변수 자동 파싱.
+    숫자 부분 = ESG machine_id."""
     result: dict[int, str] = {}
-    raw = (settings.smartthings_device_map or "").strip()
-    if raw:
-        for pair in raw.split(","):
-            pair = pair.strip()
-            if ":" in pair:
-                mid, did = pair.split(":", 1)
-                result[int(mid.strip())] = did.strip()
-    if not result and settings.smartthings_device_id and settings.smartthings_machine_id:
-        result[settings.smartthings_machine_id] = settings.smartthings_device_id
+    prefix = "SMARTTHINGS_DEVICE_"
+    for key, value in os.environ.items():
+        if key.startswith(prefix) and value.strip():
+            suffix = key[len(prefix):]
+            try:
+                result[int(suffix)] = value.strip()
+            except ValueError:
+                pass
     return result
 
 
@@ -70,7 +74,7 @@ async def poll_loop() -> None:
 
     device_map = _parse_device_map()
     if not device_map:
-        logger.info("SmartThings device map 미설정 — polling 비활성")
+        logger.info("SMARTTHINGS_DEVICE_XX 미설정 — polling 비활성")
         return
 
     logger.info(f"SmartThings polling 시작: {device_map}")
@@ -94,10 +98,10 @@ async def poll_loop() -> None:
                 finally:
                     db.close()
 
-                is_running = power_w >= settings.power_threshold_w
+                is_running = power_w >= power_threshold_w
                 prev = _last_states.get(machine_id)
                 if prev != is_running:
-                    logger.info(f"machine {machine_id}: {'가동' if is_running else '정지'} ({power_w:.1f}W)")
+                    logger.info(f"machine {machine_id}: {'가동' if is_running else '정지'} ({power_w:.1f}W, 기준 {power_threshold_w}W)")
                     _last_states[machine_id] = is_running
                     await _apply_state_change(machine_id, is_running)
 
