@@ -13,9 +13,10 @@ class Settings(BaseSettings):
     iot_device_key: str = ""
 
     smartthings_pat: str = ""
-    # 세탁기 가동 판단 기준: 급수 밸브(15~30W)부터 감지, 대기(1~8W)와 구분
-    # 냉수 세탁 드럼 회전(50~200W)도 안정적으로 포착. fly.toml [env] 또는 PATCH /admin/settings로 변경 가능
+    # 시작 임계값: available/soft_reserved → in_use (급수 뱸브 15~30W부터 감지)
     power_threshold_w: float = 20.0
+    # 정지 임계값: in_use → available (완전 대기 1~5W만 해당, 사이클 중간 정지 3~15W 오전환 방지)
+    stop_threshold_w: float = 5.0
 
     model_config = {"env_file": ".env", "extra": "ignore"}  # type: ignore[misc]
 

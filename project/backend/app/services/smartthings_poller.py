@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 _last_states: dict[int, bool] = {}
 _last_cleanup: float = 0.0
 
-_THRESHOLD_KEY = "power_threshold_w"
+_START_THRESHOLD_KEY = "power_threshold_w"
+_STOP_THRESHOLD_KEY = "stop_threshold_w"
 
 
 def _parse_device_map() -> dict[int, str]:
@@ -41,8 +42,8 @@ def _calc_interval(mode: str) -> float:
     return {"A": 480.0, "B": 120.0, "C": 60.0}.get(mode, 120.0)
 
 
-def _get_mode_and_threshold() -> tuple[str, float]:
-    """DB에서 mode와 threshold 읽기. 실패 시 기본값 반환."""
+def _get_mode_and_thresholds() -> tuple[str, float, float]:
+    """DB에서 mode, 시작/정지 임계값 읽기. 실패 시 기본값 반환."""
     try:
         db = SessionLocal()
         try:
@@ -56,14 +57,16 @@ def _get_mode_and_threshold() -> tuple[str, float]:
     try:
         db = SessionLocal()
         try:
-            threshold = system_settings_repo.get_float(db, _THRESHOLD_KEY, settings.power_threshold_w)
+            start_threshold = system_settings_repo.get_float(db, _START_THRESHOLD_KEY, settings.power_threshold_w)
+            stop_threshold = system_settings_repo.get_float(db, _STOP_THRESHOLD_KEY, settings.stop_threshold_w)
         finally:
             db.close()
     except Exception as e:
         logger.warning(f"threshold 조회 실패, 기본값 사용: {e}")
-        threshold = settings.power_threshold_w
+        start_threshold = settings.power_threshold_w
+        stop_threshold = settings.stop_threshold_w
 
-    return mode, threshold
+    return mode, start_threshold, stop_threshold
 
 
 async def _apply_state_change(machine_id: int, is_running: bool) -> None:
@@ -130,7 +133,7 @@ async def poll_loop() -> None:
     logger.info(f"SmartThings polling 시작: {device_map}")
 
     while True:
-        mode, threshold = _get_mode_and_threshold()
+        mode, start_threshold, stop_threshold = _get_mode_and_thresholds()
         interval = _calc_interval(mode)
 
         for machine_id, device_id in device_map.items():
@@ -146,12 +149,22 @@ async def poll_loop() -> None:
                 except Exception as e:
                     logger.warning(f"전력 로그 저장 실패 (machine {machine_id}): {e}")
 
-                is_running = power_w >= threshold
-                prev = _last_states.get(machine_id)
-                if prev != is_running:
+                # 히스테리시스: 이전 상태에 따라 다른 임계값 적용
+                # - 이전에 가동 중(True): 정지 임계값(stop_threshold) 사용
+                #   세탁 사이클 중간 정지(3~15W)를 이용 가능으로 오판단하는 것 방지
+                # - 이전에 정지/미확인: 시작 임계값(start_threshold) 사용
+                prev_running = _last_states.get(machine_id)
+                if prev_running is True:
+                    is_running = power_w >= stop_threshold
+                else:
+                    is_running = power_w >= start_threshold
+
+                if prev_running != is_running:
+                    effective_threshold = stop_threshold if prev_running is True else start_threshold
                     logger.info(
                         f"machine {machine_id}: {'가동' if is_running else '정지'} "
-                        f"({power_w:.1f}W, 기준 {threshold}W)"
+                        f"({power_w:.1f}W, 기준 {effective_threshold}W ← "
+                        f"{'stop' if prev_running is True else 'start'} threshold)"
                     )
                     _last_states[machine_id] = is_running
                     try:

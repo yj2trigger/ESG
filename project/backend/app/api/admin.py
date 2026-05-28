@@ -13,11 +13,13 @@ from app.services.machine_service import get_dashboard
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-_THRESHOLD_KEY = "power_threshold_w"
+_START_THRESHOLD_KEY = "power_threshold_w"
+_STOP_THRESHOLD_KEY = "stop_threshold_w"
 
 
 class SettingsUpdate(BaseModel):
-    power_threshold_w: float
+    power_threshold_w: float | None = None
+    stop_threshold_w: float | None = None
 
 
 async def _notify_gender(gender: str) -> None:
@@ -100,7 +102,10 @@ def get_settings(
     _: User = Depends(get_admin_user),
     db: Session = Depends(get_db),
 ):
-    return {"power_threshold_w": system_settings_repo.get_float(db, _THRESHOLD_KEY, settings.power_threshold_w)}
+    return {
+        "power_threshold_w": system_settings_repo.get_float(db, _START_THRESHOLD_KEY, settings.power_threshold_w),
+        "stop_threshold_w": system_settings_repo.get_float(db, _STOP_THRESHOLD_KEY, settings.stop_threshold_w),
+    }
 
 
 @router.patch("/settings")
@@ -109,5 +114,16 @@ def update_settings(
     _: User = Depends(get_admin_user),
     db: Session = Depends(get_db),
 ):
-    system_settings_repo.set_float(db, _THRESHOLD_KEY, body.power_threshold_w)
-    return {"power_threshold_w": body.power_threshold_w}
+    if body.power_threshold_w is not None:
+        if body.stop_threshold_w is not None and body.stop_threshold_w >= body.power_threshold_w:
+            raise HTTPException(status_code=400, detail="stop_threshold_w는 power_threshold_w보다 작아야 합니다")
+        system_settings_repo.set_float(db, _START_THRESHOLD_KEY, body.power_threshold_w)
+    if body.stop_threshold_w is not None:
+        start = system_settings_repo.get_float(db, _START_THRESHOLD_KEY, settings.power_threshold_w)
+        if body.stop_threshold_w >= start:
+            raise HTTPException(status_code=400, detail="stop_threshold_w는 power_threshold_w보다 작아야 합니다")
+        system_settings_repo.set_float(db, _STOP_THRESHOLD_KEY, body.stop_threshold_w)
+    return {
+        "power_threshold_w": system_settings_repo.get_float(db, _START_THRESHOLD_KEY, settings.power_threshold_w),
+        "stop_threshold_w": system_settings_repo.get_float(db, _STOP_THRESHOLD_KEY, settings.stop_threshold_w),
+    }
