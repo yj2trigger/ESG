@@ -25,7 +25,8 @@ def get_history(db: Session, machine_id: int, hours: int = 24) -> list[MachinePo
     )
 
 
-def delete_old(db: Session, days: int = 7) -> int:
+def delete_old(db: Session, days: int = 30) -> int:
+    """30일 이전 데이터 정리. 요일·시간대별 통계 분석을 위해 4주 이상 보존 필요."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     deleted = (
         db.query(MachinePowerLog)
