@@ -84,45 +84,50 @@ async def poll_loop() -> None:
     logger.info(f"SmartThings polling 시작: {device_map}")
 
     while True:
-        db = SessionLocal()
         try:
-            mode = get_current_mode(db, "male")
-            threshold = system_settings_repo.get_float(db, _THRESHOLD_KEY, settings.power_threshold_w)
-        finally:
-            db.close()
-
-        interval = _calc_interval(mode)
-
-        for machine_id, device_id in device_map.items():
-            try:
-                power_w = await smartthings_client.get_power_w(device_id)
-
-                db = SessionLocal()
-                try:
-                    machine_power_log_repo.create(db, machine_id, power_w)
-                finally:
-                    db.close()
-
-                is_running = power_w >= threshold
-                prev = _last_states.get(machine_id)
-                if prev != is_running:
-                    logger.info(
-                        f"machine {machine_id}: {'가동' if is_running else '정지'} "
-                        f"({power_w:.1f}W, 기준 {threshold}W)"
-                    )
-                    _last_states[machine_id] = is_running
-                    await _apply_state_change(machine_id, is_running)
-
-            except Exception as e:
-                logger.warning(f"SmartThings polling error (machine {machine_id}): {e}")
-
-        now = time.time()
-        if now - _last_cleanup > 86400:
             db = SessionLocal()
             try:
-                machine_power_log_repo.delete_old(db)
+                mode = get_current_mode(db, "male")
+                threshold = system_settings_repo.get_float(db, _THRESHOLD_KEY, settings.power_threshold_w)
             finally:
                 db.close()
-            _last_cleanup = now
+
+            interval = _calc_interval(mode)
+
+            for machine_id, device_id in device_map.items():
+                try:
+                    power_w = await smartthings_client.get_power_w(device_id)
+
+                    db = SessionLocal()
+                    try:
+                        machine_power_log_repo.create(db, machine_id, power_w)
+                    finally:
+                        db.close()
+
+                    is_running = power_w >= threshold
+                    prev = _last_states.get(machine_id)
+                    if prev != is_running:
+                        logger.info(
+                            f"machine {machine_id}: {'가동' if is_running else '정지'} "
+                            f"({power_w:.1f}W, 기준 {threshold}W)"
+                        )
+                        _last_states[machine_id] = is_running
+                        await _apply_state_change(machine_id, is_running)
+
+                except Exception as e:
+                    logger.warning(f"SmartThings polling error (machine {machine_id}): {e}")
+
+            now = time.time()
+            if now - _last_cleanup > 86400:
+                db = SessionLocal()
+                try:
+                    machine_power_log_repo.delete_old(db)
+                finally:
+                    db.close()
+                _last_cleanup = now
+
+        except Exception as e:
+            logger.error(f"polling 루프 오류 (60초 후 재시도): {e}")
+            interval = 60.0
 
         await asyncio.sleep(interval)
