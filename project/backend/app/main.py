@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -18,6 +19,8 @@ from app.core.limiter import limiter
 from app.repositories import machine_repo
 from app.services import smartthings_poller
 import app.models  # noqa: F401 — register all models with Base.metadata
+
+logging.getLogger("app").setLevel(logging.INFO)
 
 
 @asynccontextmanager
