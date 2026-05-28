@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ from app.config import settings
 from app.core.database import Base, SessionLocal, engine
 from app.core.limiter import limiter
 from app.repositories import machine_repo
+from app.services import smartthings_poller
 import app.models  # noqa: F401 — register all models with Base.metadata
 
 
@@ -26,7 +28,13 @@ async def lifespan(app: FastAPI):
         machine_repo.seed(db)
     finally:
         db.close()
+    task = asyncio.create_task(smartthings_poller.poll_loop())
     yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(title="ESG — 기숙사 세탁기 예약 서비스", lifespan=lifespan)

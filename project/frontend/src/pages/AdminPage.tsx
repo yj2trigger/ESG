@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { useAuthStore } from '../store/authStore'
-import { adminGetMachines, adminSetStatus, AdminMachine, MachineStatus } from '../api/admin'
+import { adminGetMachines, adminSetStatus, adminGetPowerHistory, AdminMachine, MachineStatus, PowerDataPoint } from '../api/admin'
 
 const STATUS_LABEL: Record<MachineStatus, string> = {
   available: '이용 가능',
@@ -18,8 +19,57 @@ const STATUS_COLOR: Record<MachineStatus, string> = {
 }
 
 const GENDER_LABEL: Record<string, string> = { male: '남', female: '여' }
-
 const ALL_STATUSES: MachineStatus[] = ['available', 'in_use', 'broken']
+const THRESHOLD_W = 100
+
+function formatTime(iso: string): string {
+  const d = new Date(iso)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function PowerGraph({ machineId, token }: { machineId: number; token: string }) {
+  const [data, setData] = useState<PowerDataPoint[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    adminGetPowerHistory(token, machineId, 24)
+      .then(setData)
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [machineId, token])
+
+  if (loading) return <div style={styles.graphMsg}>불러오는 중...</div>
+  if (data.length === 0) return <div style={styles.graphMsg}>데이터 없음 (polling 시작 후 수집됨)</div>
+
+  const chartData = data.map((d) => ({ time: formatTime(d.timestamp), power: d.power_w }))
+  const latest = data[data.length - 1]?.power_w ?? 0
+  const isRunning = latest >= THRESHOLD_W
+
+  return (
+    <div style={styles.graphContainer}>
+      <div style={styles.graphHeader}>
+        <span>현재 <strong>{latest.toFixed(1)}W</strong></span>
+        <span style={{ color: isRunning ? '#c33' : '#2a7', fontSize: '0.82rem' }}>
+          {isRunning ? '● 가동 중' : '● 정지'}
+        </span>
+      </div>
+      <ResponsiveContainer width="100%" height={160}>
+        <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+          <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+          <YAxis tick={{ fontSize: 10 }} unit="W" width={50} />
+          <Tooltip formatter={(v: unknown) => [`${Number(v).toFixed(1)}W`, '전력']} />
+          <ReferenceLine
+            y={THRESHOLD_W}
+            stroke="#e80"
+            strokeDasharray="4 2"
+            label={{ value: '가동 기준', fontSize: 9, fill: '#e80', position: 'insideTopRight' }}
+          />
+          <Line type="monotone" dataKey="power" stroke="#4a90d9" dot={false} strokeWidth={1.5} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
 
 export default function AdminPage() {
   const user = useAuthStore((s) => s.user)
@@ -28,6 +78,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [updating, setUpdating] = useState<number | null>(null)
+  const [expandedGraphs, setExpandedGraphs] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     if (!user || user.role !== 'admin') {
@@ -62,6 +113,15 @@ export default function AdminPage() {
     }
   }
 
+  const toggleGraph = (machineId: number) => {
+    setExpandedGraphs((prev) => {
+      const next = new Set(prev)
+      if (next.has(machineId)) next.delete(machineId)
+      else next.add(machineId)
+      return next
+    })
+  }
+
   if (loading) return <div style={styles.center}>불러오는 중...</div>
   if (error) return <div style={styles.center}><p style={{ color: '#c00' }}>{error}</p></div>
 
@@ -82,28 +142,39 @@ export default function AdminPage() {
           <div key={floor} style={styles.floorSection}>
             <div style={styles.floorLabel}>{floor}층</div>
             {ms.map((m) => (
-              <div key={m.id} style={styles.machineRow}>
-                <div style={styles.machineInfo}>
-                  <span style={{ fontWeight: 700 }}>{m.machine_number}번</span>
-                  {m.gender_restriction && (
-                    <span style={styles.genderTag}>{GENDER_LABEL[m.gender_restriction]}</span>
-                  )}
-                  <span style={{ ...styles.statusDot, color: STATUS_COLOR[m.status] }}>
-                    ● {STATUS_LABEL[m.status]}
-                  </span>
-                </div>
-                <div style={styles.btnGroup}>
-                  {ALL_STATUSES.filter((s) => s !== m.status).map((s) => (
+              <div key={m.id}>
+                <div style={styles.machineRow}>
+                  <div style={styles.machineInfo}>
+                    <span style={{ fontWeight: 700 }}>{m.machine_number}번</span>
+                    {m.gender_restriction && (
+                      <span style={styles.genderTag}>{GENDER_LABEL[m.gender_restriction]}</span>
+                    )}
+                    <span style={{ ...styles.statusDot, color: STATUS_COLOR[m.status] }}>
+                      ● {STATUS_LABEL[m.status]}
+                    </span>
+                  </div>
+                  <div style={styles.btnGroup}>
                     <button
-                      key={s}
-                      style={{ ...styles.statusBtn, borderColor: STATUS_COLOR[s], color: STATUS_COLOR[s] }}
-                      onClick={() => handleStatusChange(m, s)}
-                      disabled={updating === m.id}
+                      style={styles.graphBtn}
+                      onClick={() => toggleGraph(m.id)}
                     >
-                      {STATUS_LABEL[s]}
+                      {expandedGraphs.has(m.id) ? '▲ 그래프' : '▼ 그래프'}
                     </button>
-                  ))}
+                    {ALL_STATUSES.filter((s) => s !== m.status).map((s) => (
+                      <button
+                        key={s}
+                        style={{ ...styles.statusBtn, borderColor: STATUS_COLOR[s], color: STATUS_COLOR[s] }}
+                        onClick={() => handleStatusChange(m, s)}
+                        disabled={updating === m.id}
+                      >
+                        {STATUS_LABEL[s]}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+                {expandedGraphs.has(m.id) && (
+                  <PowerGraph machineId={m.id} token={user!.token} />
+                )}
               </div>
             ))}
           </div>
@@ -128,4 +199,8 @@ const styles: Record<string, React.CSSProperties> = {
   statusDot: { fontSize: '0.85rem' },
   btnGroup: { display: 'flex', gap: '0.4rem', flexWrap: 'wrap' },
   statusBtn: { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid', borderRadius: '4px', cursor: 'pointer', background: '#fff' },
+  graphBtn: { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #4a90d9', borderRadius: '4px', cursor: 'pointer', background: '#fff', color: '#4a90d9' },
+  graphContainer: { background: '#f8f9fa', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.5rem', border: '1px solid #e9ecef' },
+  graphHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.85rem' },
+  graphMsg: { padding: '1rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' },
 }

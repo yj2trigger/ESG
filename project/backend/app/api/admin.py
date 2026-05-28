@@ -1,11 +1,11 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, get_db
 from app.core.dependencies import get_admin_user
 from app.core.ws_manager import manager
 from app.models.user import User
-from app.repositories import machine_repo, machine_status_log_repo
+from app.repositories import machine_power_log_repo, machine_repo, machine_status_log_repo
 from app.schemas.machine import MachineAdminItem, MachineStatusUpdate
 from app.services.machine_service import get_dashboard
 
@@ -74,3 +74,14 @@ async def update_machine_status(
             background_tasks.add_task(_broadcast_gender, g)
 
     return updated
+
+
+@router.get("/machines/{machine_id}/power-history")
+def get_power_history(
+    machine_id: int,
+    hours: int = Query(default=24, ge=1, le=168),
+    _: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+):
+    logs = machine_power_log_repo.get_history(db, machine_id, hours=hours)
+    return [{"timestamp": log.recorded_at.isoformat(), "power_w": log.power_w} for log in logs]
