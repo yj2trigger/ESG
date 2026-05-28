@@ -23,8 +23,8 @@ const ALL_STATUSES: MachineStatus[] = ['available', 'in_use', 'broken']
 const THRESHOLD_W = 100
 const GRAPH_REFRESH_MS = 60_000
 
-function formatTime(iso: string): string {
-  const d = new Date(iso)
+function fmtHHMM(ts: number): string {
+  const d = new Date(ts)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
@@ -34,7 +34,7 @@ function PowerGraph({ machineId, token }: { machineId: number; token: string }) 
   const [lastFetched, setLastFetched] = useState<Date | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const fetch = () => {
+  const fetchData = () => {
     adminGetPowerHistory(token, machineId, 24)
       .then((d) => { setData(d); setLastFetched(new Date()) })
       .catch(() => {})
@@ -42,8 +42,8 @@ function PowerGraph({ machineId, token }: { machineId: number; token: string }) 
   }
 
   useEffect(() => {
-    fetch()
-    intervalRef.current = setInterval(fetch, GRAPH_REFRESH_MS)
+    fetchData()
+    intervalRef.current = setInterval(fetchData, GRAPH_REFRESH_MS)
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machineId, token])
@@ -54,45 +54,71 @@ function PowerGraph({ machineId, token }: { machineId: number; token: string }) 
 
   if (loading) return <div style={styles.graphMsg}>불러오는 중...</div>
 
-  if (data.length === 0) {
-    return (
-      <div style={styles.graphContainer}>
-        <div style={styles.graphHeader}>
-          <span>현재 <strong>— W</strong></span>
-          <span style={{ color: '#888', fontSize: '0.82rem' }}>● 데이터 없음</span>
-        </div>
-        <div style={{ ...styles.graphMsg, padding: '2rem 0' }}>수집된 전력 데이터 없음</div>
-      </div>
-    )
-  }
+  // 오늘 00:00 ~ 23:59 타임스탬프
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 0)
+  const domainStart = todayStart.getTime()
+  const domainEnd = todayEnd.getTime()
 
-  const chartData = data.map((d) => ({ time: formatTime(d.timestamp), power: d.power_w }))
-  const latest = data[data.length - 1]?.power_w ?? 0
-  const isRunning = latest >= THRESHOLD_W
+  // 실제 데이터 포인트 (power = 숫자)
+  // 경계 null 포인트로 미래 구간 선 없이 X축만 표시
+  const chartData: { ts: number; power: number | null }[] = [
+    { ts: domainStart, power: null },
+    ...data.map(d => ({ ts: new Date(d.timestamp).getTime(), power: d.power_w })),
+    { ts: domainEnd, power: null },
+  ]
+
+  const latest = data.length > 0 ? data[data.length - 1].power_w : null
+  const isRunning = latest !== null && latest >= THRESHOLD_W
+
+  // 3시간마다 tick
+  const ticks: number[] = []
+  for (let h = 0; h <= 23; h += 3) {
+    const t = new Date(todayStart); t.setHours(h)
+    ticks.push(t.getTime())
+  }
 
   return (
     <div style={styles.graphContainer}>
       <div style={styles.graphHeader}>
-        <span>현재 <strong>{latest.toFixed(1)}W</strong></span>
+        <span>현재 <strong>{latest !== null ? `${latest.toFixed(1)}W` : '— W'}</strong></span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ color: '#aaa', fontSize: '0.75rem' }}>{updatedLabel}</span>
-          <span style={{ color: isRunning ? '#c33' : '#2a7', fontSize: '0.82rem' }}>
-            {isRunning ? '● 가동 중' : '● 정지'}
+          <span style={{ color: latest === null ? '#888' : isRunning ? '#c33' : '#2a7', fontSize: '0.82rem' }}>
+            {latest === null ? '● 데이터 없음' : isRunning ? '● 가동 중' : '● 정지'}
           </span>
         </div>
       </div>
       <ResponsiveContainer width="100%" height={160}>
         <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-          <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+          <XAxis
+            dataKey="ts"
+            type="number"
+            scale="time"
+            domain={[domainStart, domainEnd]}
+            ticks={ticks}
+            tickFormatter={fmtHHMM}
+            tick={{ fontSize: 10 }}
+          />
           <YAxis tick={{ fontSize: 10 }} unit="W" width={50} />
-          <Tooltip formatter={(v: unknown) => [`${Number(v).toFixed(1)}W`, '전력']} />
+          <Tooltip
+            labelFormatter={(v) => fmtHHMM(Number(v))}
+            formatter={(v: unknown) => v !== null ? [`${Number(v).toFixed(1)}W`, '전력'] : ['—', '전력']}
+          />
           <ReferenceLine
             y={THRESHOLD_W}
             stroke="#e80"
             strokeDasharray="4 2"
             label={{ value: '가동 기준', fontSize: 9, fill: '#e80', position: 'insideTopRight' }}
           />
-          <Line type="monotone" dataKey="power" stroke="#4a90d9" dot={false} strokeWidth={1.5} />
+          <Line
+            type="monotone"
+            dataKey="power"
+            stroke="#4a90d9"
+            dot={false}
+            strokeWidth={1.5}
+            connectNulls={false}
+          />
         </LineChart>
       </ResponsiveContainer>
     </div>
