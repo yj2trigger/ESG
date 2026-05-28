@@ -226,26 +226,28 @@ function MachineStartedToast({
 // ── PollingInfoBar ───────────────────────────────────────────
 
 function PollingInfoBar({ mode, lastRefreshed }: { mode: MachineMode; lastRefreshed: Date }) {
-  const [, forceUpdate] = useState(0)
+  const [now, setNow] = useState(Date.now())
 
   useEffect(() => {
-    const t = setInterval(() => forceUpdate((n) => n + 1), 10000)
+    const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
   const intervals: Record<MachineMode, string> = {
-    A: '480초 (낮 07~22시) · 900초 (새벽)',
-    B: '120초 (낮 07~22시) · 900초 (새벽)',
-    C: '60초 (낮 07~22시) · 900초 (새벽)',
+    A: '480초 (낙 07~22시) · 900초 (새벽)',
+    B: '120초 (낙 07~22시) · 900초 (새벽)',
+    C: '60초 (낙 07~22시) · 900초 (새벽)',
   }
 
-  const elapsed = Math.floor((Date.now() - lastRefreshed.getTime()) / 1000)
-  const elapsedText = elapsed < 60 ? `${elapsed}초 전` : `${Math.floor(elapsed / 60)}분 전`
+  const elapsed = Math.floor((now - lastRefreshed.getTime()) / 1000)
+  const elapsedText = elapsed < 60
+    ? `${elapsed}초 전`
+    : `${Math.floor(elapsed / 60)}분 ${elapsed % 60}초 전`
 
   return (
     <div style={styles.pollingBar}>
       <span>IoT 감지 주기: {intervals[mode]}</span>
-      <span>화면 갱신: WebSocket 실시간 · {elapsedText} 갱신</span>
+      <span>화면 갱신: WebSocket 실시간 (이벤트 기반) · 마지막 데이터 갱신 {elapsedText}</span>
     </div>
   )
 }
