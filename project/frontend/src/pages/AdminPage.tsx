@@ -20,8 +20,8 @@ const STATUS_COLOR: Record<MachineStatus, string> = {
 }
 
 const GENDER_LABEL: Record<string, string> = { male: '남', female: '여' }
-const ALL_STATUSES: MachineStatus[] = ['available', 'in_use', 'broken']
 const GRAPH_REFRESH_MS = 60_000
+const STATUS_POLL_MS = 10_000
 
 function fmtHHMM(ts: number): string {
   const d = new Date(ts)
@@ -29,15 +29,9 @@ function fmtHHMM(ts: number): string {
 }
 
 function PowerGraph({
-  machineId,
-  token,
-  startThreshold,
-  stopThreshold,
+  machineId, token, startThreshold, stopThreshold,
 }: {
-  machineId: number
-  token: string
-  startThreshold: number
-  stopThreshold: number
+  machineId: number; token: string; startThreshold: number; stopThreshold: number
 }) {
   const [data, setData] = useState<PowerDataPoint[]>([])
   const [loading, setLoading] = useState(true)
@@ -97,24 +91,17 @@ function PowerGraph({
       </div>
       <ResponsiveContainer width="100%" height={160}>
         <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-          <XAxis
-            dataKey="ts" type="number" scale="time"
-            domain={[domainStart, domainEnd]} ticks={ticks}
-            tickFormatter={fmtHHMM} tick={{ fontSize: 10 }}
-          />
+          <XAxis dataKey="ts" type="number" scale="time" domain={[domainStart, domainEnd]}
+            ticks={ticks} tickFormatter={fmtHHMM} tick={{ fontSize: 10 }} />
           <YAxis tick={{ fontSize: 10 }} unit="W" width={50} />
           <Tooltip
             labelFormatter={(v) => fmtHHMM(Number(v))}
             formatter={(v: unknown) => v !== null ? [`${Number(v).toFixed(1)}W`, '전력'] : ['—', '전력']}
           />
-          <ReferenceLine
-            y={startThreshold} stroke="#e80" strokeDasharray="4 2"
-            label={{ value: `가동 기준 ${startThreshold}W`, fontSize: 9, fill: '#e80', position: 'insideTopRight' }}
-          />
-          <ReferenceLine
-            y={stopThreshold} stroke="#4a90d9" strokeDasharray="4 2"
-            label={{ value: `정지 기준 ${stopThreshold}W`, fontSize: 9, fill: '#4a90d9', position: 'insideBottomRight' }}
-          />
+          <ReferenceLine y={startThreshold} stroke="#e80" strokeDasharray="4 2"
+            label={{ value: `가동 ${startThreshold}W`, fontSize: 9, fill: '#e80', position: 'insideTopRight' }} />
+          <ReferenceLine y={stopThreshold} stroke="#4a90d9" strokeDasharray="4 2"
+            label={{ value: `정지 ${stopThreshold}W`, fontSize: 9, fill: '#4a90d9', position: 'insideBottomRight' }} />
           <Line type="monotone" dataKey="power" stroke="#4a90d9" dot={false} strokeWidth={1.5} connectNulls={false} />
         </LineChart>
       </ResponsiveContainer>
@@ -130,59 +117,58 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null)
   const [updating, setUpdating] = useState<number | null>(null)
   const [expandedGraphs, setExpandedGraphs] = useState<Set<number>>(new Set())
-  const [startThreshold, setStartThreshold] = useState(10)   // config 기본값와 동기화
+  const [startThreshold, setStartThreshold] = useState(10)
   const [stopThreshold, setStopThreshold] = useState(5)
 
   const token = user?.token ?? null
+
+  const reloadMachines = async () => {
+    if (!user) return
+    try {
+      setMachines(await adminGetMachines(user.token))
+    } catch { /* silent */ }
+  }
 
   useEffect(() => {
     if (!user || user.role !== 'admin') {
       navigate('/', { replace: true })
       return
     }
-    load()
+    // 초기 로드
+    ;(async () => {
+      setLoading(true)
+      try {
+        const [ms, cfg] = await Promise.all([
+          adminGetMachines(user.token),
+          adminGetSettings(user.token),
+        ])
+        setMachines(ms)
+        setStartThreshold(cfg.power_threshold_w)
+        setStopThreshold(cfg.stop_threshold_w)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '오류 발생')
+      } finally {
+        setLoading(false)
+      }
+    })()
+    // 10초마다 지속 폴링 (IoT polling이 없더라도 상태 반영)
+    const t = setInterval(reloadMachines, STATUS_POLL_MS)
+    return () => clearInterval(t)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // machines_updated WS 수신 시 머신 목록 자동 새로고침
+  // machines_updated WS 수신 시 즉시 갱신 (IoT 데이터 우선)
   useWebSocket(token, (msg: WsMessage) => {
-    if (msg.type === 'machines_updated') {
-      reloadMachines()
-    }
+    if (msg.type === 'machines_updated') reloadMachines()
   })
 
-  const reloadMachines = async () => {
-    if (!user) return
-    try {
-      setMachines(await adminGetMachines(user.token))
-    } catch {
-      // silent — 전체 로드 실패 시만 에러 표시
-    }
-  }
-
-  const load = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const [ms, cfg] = await Promise.all([
-        adminGetMachines(user!.token),
-        adminGetSettings(user!.token),
-      ])
-      setMachines(ms)
-      setStartThreshold(cfg.power_threshold_w)
-      setStopThreshold(cfg.stop_threshold_w)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '오류 발생')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleStatusChange = async (machine: AdminMachine, status: MachineStatus) => {
+  // 고장 표시/복구만 가능, 나머지 상태는 IoT가 자동 관리
+  const handleBrokenToggle = async (machine: AdminMachine) => {
+    const next: MachineStatus = machine.status === 'broken' ? 'available' : 'broken'
     setUpdating(machine.id)
     try {
-      const updated = await adminSetStatus(user!.token, machine.id, status)
-      setMachines((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
+      const updated = await adminSetStatus(user!.token, machine.id, next)
+      setMachines((prev) => prev.map((m) => m.id === updated.id ? updated : m))
     } catch (e) {
       alert(e instanceof Error ? e.message : '변경 실패')
     } finally {
@@ -217,7 +203,7 @@ export default function AdminPage() {
       <main style={styles.main}>
         <div style={styles.thresholdInfo}>
           가동 시작: <strong>{startThreshold}W</strong> · 정지 판단: <strong>{stopThreshold}W</strong>
-          <span style={{ marginLeft: '0.75rem', color: '#bbb' }}>· WebSocket 실시간 연동</span>
+          <span style={{ marginLeft: '0.75rem', color: '#bbb' }}>· {STATUS_POLL_MS / 1000}초 주기 갱신 + WS 실시간</span>
         </div>
         {Object.entries(byFloor).sort(([a], [b]) => Number(a) - Number(b)).map(([floor, ms]) => (
           <div key={floor} style={styles.floorSection}>
@@ -238,24 +224,24 @@ export default function AdminPage() {
                     <button style={styles.graphBtn} onClick={() => toggleGraph(m.id)}>
                       {expandedGraphs.has(m.id) ? '▲ 그래프' : '▼ 그래프'}
                     </button>
-                    {ALL_STATUSES.filter((s) => s !== m.status).map((s) => (
-                      <button
-                        key={s}
-                        style={{ ...styles.statusBtn, borderColor: STATUS_COLOR[s], color: STATUS_COLOR[s] }}
-                        onClick={() => handleStatusChange(m, s)}
-                        disabled={updating === m.id}
-                      >
-                        {STATUS_LABEL[s]}
-                      </button>
-                    ))}
+                    {/* 고장 토글만 노출. 나머지 상태(available/in_use/soft_reserved)는 IoT 자동 관리 */}
+                    <button
+                      style={{
+                        ...styles.statusBtn,
+                        borderColor: m.status === 'broken' ? STATUS_COLOR.available : STATUS_COLOR.broken,
+                        color: m.status === 'broken' ? STATUS_COLOR.available : STATUS_COLOR.broken,
+                      }}
+                      onClick={() => handleBrokenToggle(m)}
+                      disabled={updating === m.id}
+                    >
+                      {m.status === 'broken' ? '복구' : '고장'}
+                    </button>
                   </div>
                 </div>
                 {expandedGraphs.has(m.id) && (
                   <PowerGraph
-                    machineId={m.id}
-                    token={user!.token}
-                    startThreshold={startThreshold}
-                    stopThreshold={stopThreshold}
+                    machineId={m.id} token={user!.token}
+                    startThreshold={startThreshold} stopThreshold={stopThreshold}
                   />
                 )}
               </div>
