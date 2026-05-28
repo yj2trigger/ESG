@@ -34,6 +34,8 @@ export default function DashboardPage() {
   const [queueInfo, setQueueInfo] = useState<QueueJoinResponse | null>(null)
   const [liveQueuePos, setLiveQueuePos] = useState<number | null>(null)
   const [liveQueueTotal, setLiveQueueTotal] = useState<number | null>(null)
+  const [machineStartedToast, setMachineStartedToast] = useState<{ floor: number; machine_number: number } | null>(null)
+  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date())
 
   const token = user?.token ?? null
 
@@ -43,6 +45,7 @@ export default function DashboardPage() {
     try {
       const res = await getMachines(token)
       setData(res)
+      setLastRefreshed(new Date())
     } catch (e) {
       setError(e instanceof Error ? e.message : '오류 발생')
     }
@@ -70,6 +73,9 @@ export default function DashboardPage() {
     } else if (msg.type === 'queue_position_updated' && msg.position != null) {
       setLiveQueuePos(msg.position as number)
       setLiveQueueTotal(msg.total as number)
+    } else if (msg.type === 'machine_started' && msg.machine) {
+      setMachineStartedToast({ floor: msg.machine.floor, machine_number: msg.machine.machine_number })
+      setActiveReservation(null)
     }
   })
 
@@ -120,6 +126,14 @@ export default function DashboardPage() {
       </header>
 
       <main style={styles.main}>
+        {/* 세탁기 작동 시작 토스트 (10초 자동 소멸) */}
+        {machineStartedToast && (
+          <MachineStartedToast
+            machine={machineStartedToast}
+            onDismiss={() => setMachineStartedToast(null)}
+          />
+        )}
+
         {/* 5분 수락 대기 배너 */}
         {pendingOffer && (
           <PendingOfferBanner
@@ -140,6 +154,7 @@ export default function DashboardPage() {
         )}
 
         <ModeBanner mode={data.mode} />
+        <PollingInfoBar mode={data.mode} lastRefreshed={lastRefreshed} />
 
         {data.mode === 'A' && !queueInfo && !pendingOffer && <ModeAView floors={data.floors} />}
         {data.mode === 'B' && !activeReservation && !queueInfo && !pendingOffer && (
@@ -165,6 +180,72 @@ export default function DashboardPage() {
 
         <button style={styles.refreshBtn} onClick={refresh}>새로고침</button>
       </main>
+    </div>
+  )
+}
+
+// ── MachineStartedToast ──────────────────────────────────────
+
+function MachineStartedToast({
+  machine,
+  onDismiss,
+}: {
+  machine: { floor: number; machine_number: number }
+  onDismiss: () => void
+}) {
+  const [secsLeft, setSecsLeft] = useState(10)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSecsLeft((s) => {
+        if (s <= 1) {
+          clearInterval(interval)
+          onDismiss()
+          return 0
+        }
+        return s - 1
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [onDismiss])
+
+  return (
+    <div style={styles.machineStartedToast}>
+      <div style={styles.toastProgressTrack}>
+        <div style={{ ...styles.toastProgressBar, width: `${(secsLeft / 10) * 100}%` }} />
+      </div>
+      <strong style={{ fontSize: '1.05rem' }}>세탁기 작동이 시작되었습니다</strong>
+      <span style={{ fontSize: '0.9rem', color: '#444' }}>
+        {machine.floor}층 {machine.machine_number}번 세탁기
+      </span>
+      <span style={{ fontSize: '0.75rem', color: '#888' }}>{secsLeft}초 후 사라집니다</span>
+    </div>
+  )
+}
+
+// ── PollingInfoBar ───────────────────────────────────────────
+
+function PollingInfoBar({ mode, lastRefreshed }: { mode: MachineMode; lastRefreshed: Date }) {
+  const [, forceUpdate] = useState(0)
+
+  useEffect(() => {
+    const t = setInterval(() => forceUpdate((n) => n + 1), 10000)
+    return () => clearInterval(t)
+  }, [])
+
+  const intervals: Record<MachineMode, string> = {
+    A: '480초 (낮 07~22시) · 900초 (새벽)',
+    B: '120초 (낮 07~22시) · 900초 (새벽)',
+    C: '60초 (낮 07~22시) · 900초 (새벽)',
+  }
+
+  const elapsed = Math.floor((Date.now() - lastRefreshed.getTime()) / 1000)
+  const elapsedText = elapsed < 60 ? `${elapsed}초 전` : `${Math.floor(elapsed / 60)}분 전`
+
+  return (
+    <div style={styles.pollingBar}>
+      <span>IoT 감지 주기: {intervals[mode]}</span>
+      <span>화면 갱신: WebSocket 실시간 · {elapsedText} 갱신</span>
     </div>
   )
 }
@@ -454,9 +535,10 @@ const styles: Record<string, React.CSSProperties> = {
   settingsBtn: { padding: '0.35rem 0.85rem', fontSize: '0.8rem', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', background: '#fff' },
   adminBtn: { padding: '0.35rem 0.85rem', fontSize: '0.8rem', border: '1px solid #555', borderRadius: '4px', cursor: 'pointer', background: '#333', color: '#fff' },
   main: { flex: 1, padding: '1.5rem', maxWidth: '600px', margin: '0 auto', width: '100%', boxSizing: 'border-box' },
-  modeBanner: { border: '2px solid', borderRadius: '10px', padding: '1rem 1.25rem', marginBottom: '1.5rem' },
+  modeBanner: { border: '2px solid', borderRadius: '10px', padding: '1rem 1.25rem', marginBottom: '0.5rem' },
   modeLabel: { fontWeight: 800, fontSize: '1.1rem' },
   modeDesc: { margin: '0.4rem 0 0', fontSize: '0.9rem', color: '#444' },
+  pollingBar: { display: 'flex', flexDirection: 'column', gap: '0.15rem', padding: '0.4rem 0.75rem', marginBottom: '1rem', background: '#f8f9fa', borderRadius: '6px', fontSize: '0.72rem', color: '#999' },
   floorGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.75rem' },
   floorCard: { border: '1px solid #ddd', borderRadius: '8px', padding: '1rem', textAlign: 'center' },
   floorNum: { fontWeight: 700, fontSize: '1rem' },
@@ -476,4 +558,7 @@ const styles: Record<string, React.CSSProperties> = {
   reservationBanner: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem', padding: '1.25rem 1.5rem', marginBottom: '1rem', background: '#e8f5e9', border: '2px solid #2a7', borderRadius: '10px', textAlign: 'center' },
   offerMachine: { fontSize: '1.5rem', fontWeight: 800, color: '#333' },
   offerTimer: { fontSize: '1rem', fontWeight: 700, color: '#555' },
+  machineStartedToast: { position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.3rem', padding: '1rem 1.5rem', marginBottom: '1rem', background: '#e8f5e9', border: '2px solid #2a7', borderRadius: '10px', textAlign: 'center' },
+  toastProgressTrack: { position: 'absolute', top: 0, left: 0, right: 0, height: '3px', background: '#c8e6c9' },
+  toastProgressBar: { height: '3px', background: '#2a7', transition: 'width 1s linear' },
 }

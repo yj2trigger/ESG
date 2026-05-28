@@ -67,23 +67,47 @@ def _get_mode_and_threshold() -> tuple[str, float]:
 
 
 async def _apply_state_change(machine_id: int, is_running: bool) -> None:
-    from app.api.iot import _handle_available, _handle_in_use
+    from app.api.iot import _handle_available, _handle_in_use, _handle_machine_started
 
     db = SessionLocal()
     try:
         machine = machine_repo.get_by_id(db, machine_id)
         if not machine:
             return
-        new_status = "in_use" if is_running else "available"
-        if machine.status == new_status:
+
+        previous_status = machine.status
+
+        # soft_reserved 보호:
+        # - 전력 낮음(is_running=False): 예약자가 아직 세탁기를 켜지 않음 → 예약 유지 (만료 타이머에 위임)
+        # - 전력 높음(is_running=True): 예약자가 세탁기를 가동 → in_use로 전환 + 시작 알림
+        # available/in_use/broken 상태는 기존 로직 그대로 적용
+        if previous_status == "soft_reserved":
+            if not is_running:
+                return
+            new_status = "in_use"
+        else:
+            new_status = "in_use" if is_running else "available"
+
+        if previous_status == new_status:
             return
+
+        reserved_user_id = (
+            machine.reserved_by_user_id
+            if previous_status == "soft_reserved" and new_status == "in_use"
+            else None
+        )
+        machine_floor = machine.floor
+        machine_number = machine.machine_number
         machine_repo.set_status(db, machine, new_status)
         gender = machine.gender_restriction
     finally:
         db.close()
 
     genders = ["male", "female"] if gender is None else [gender]
-    if is_running:
+
+    if new_status == "in_use":
+        if reserved_user_id:
+            await _handle_machine_started(reserved_user_id, genders[0], machine_floor, machine_number)
         for g in genders:
             await _handle_in_use(g)
     else:
