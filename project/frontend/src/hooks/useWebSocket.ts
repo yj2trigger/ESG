@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 const WS_BASE = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000'
 
 export interface WsMessage {
-  type: 'machines_updated' | 'queue_offer' | 'queue_offer_expired' | 'queue_position_updated' | 'machine_started'
+  type: 'machines_updated' | 'queue_offer' | 'queue_offer_expired' | 'queue_position_updated' | 'machine_started' | 'poll_tick'
   mode?: string
   floors?: unknown[]
   machine?: { id?: number; floor: number; machine_number: number }
@@ -11,6 +11,7 @@ export interface WsMessage {
   message?: string
   position?: number
   total?: number
+  next_interval_sec?: number
 }
 
 export function useWebSocket(token: string | null, onMessage: (msg: WsMessage) => void) {

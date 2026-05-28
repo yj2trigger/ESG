@@ -78,7 +78,7 @@ async def _apply_state_change(machine_id: int, is_running: bool) -> None:
         previous_status = machine.status
 
         # soft_reserved 보호:
-        # - 전력 낮음(is_running=False): 예약자가 아직 세탁기를 켜지 않음 → 예약 유지 (만료 타이머에 위임)
+        # - 전력 낙음(is_running=False): 예약자가 아직 세탁기를 켜지 않음 → 예약 유지 (만료 타이머에 위임)
         # - 전력 높음(is_running=True): 예약자가 세탁기를 가동 → in_use로 전환 + 시작 알림
         # available/in_use/broken 상태는 기존 로직 그대로 적용
         if previous_status == "soft_reserved":
@@ -174,4 +174,16 @@ async def poll_loop() -> None:
                 logger.warning(f"오래된 전력 로그 정리 실패: {e}")
             _last_cleanup = now
 
-        await asyncio.sleep(interval)
+        # 다음 poll 시점을 클라이언트에 알림 → PollingInfoBar 카운트다운 동기화
+        next_interval = _calc_interval(mode)
+        try:
+            from app.core.ws_manager import manager
+            for gender in ["male", "female"]:
+                await manager.broadcast(gender, {
+                    "type": "poll_tick",
+                    "next_interval_sec": int(next_interval),
+                })
+        except Exception as e:
+            logger.warning(f"poll_tick 브로드쾐스트 실패: {e}")
+
+        await asyncio.sleep(next_interval)

@@ -24,6 +24,12 @@ interface ActiveReservation {
   reserved_until: string // ISO string, 10 min window
 }
 
+// poll_tick 수신 시점 + 다음 주기
+export interface PollTick {
+  at: number        // Date.now() at receipt
+  intervalSec: number
+}
+
 export default function DashboardPage() {
   const user = useAuthStore((s) => s.user)
   const navigate = useNavigate()
@@ -35,7 +41,7 @@ export default function DashboardPage() {
   const [liveQueuePos, setLiveQueuePos] = useState<number | null>(null)
   const [liveQueueTotal, setLiveQueueTotal] = useState<number | null>(null)
   const [machineStartedToast, setMachineStartedToast] = useState<{ floor: number; machine_number: number } | null>(null)
-  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date())
+  const [pollTick, setPollTick] = useState<PollTick | null>(null)
 
   const token = user?.token ?? null
 
@@ -45,7 +51,6 @@ export default function DashboardPage() {
     try {
       const res = await getMachines(token)
       setData(res)
-      setLastRefreshed(new Date())
     } catch (e) {
       setError(e instanceof Error ? e.message : '오류 발생')
     }
@@ -76,6 +81,8 @@ export default function DashboardPage() {
     } else if (msg.type === 'machine_started' && msg.machine) {
       setMachineStartedToast({ floor: msg.machine.floor, machine_number: msg.machine.machine_number })
       setActiveReservation(null)
+    } else if (msg.type === 'poll_tick' && msg.next_interval_sec) {
+      setPollTick({ at: Date.now(), intervalSec: msg.next_interval_sec })
     }
   })
 
@@ -154,7 +161,7 @@ export default function DashboardPage() {
         )}
 
         <ModeBanner mode={data.mode} />
-        <PollingInfoBar mode={data.mode} lastRefreshed={lastRefreshed} />
+        <PollingInfoBar mode={data.mode} pollTick={pollTick} />
 
         {data.mode === 'A' && !queueInfo && !pendingOffer && <ModeAView floors={data.floors} />}
         {data.mode === 'B' && !activeReservation && !queueInfo && !pendingOffer && (
@@ -225,7 +232,7 @@ function MachineStartedToast({
 
 // ── PollingInfoBar ───────────────────────────────────────────
 
-function PollingInfoBar({ mode, lastRefreshed }: { mode: MachineMode; lastRefreshed: Date }) {
+function PollingInfoBar({ mode, pollTick }: { mode: MachineMode; pollTick: PollTick | null }) {
   const [now, setNow] = useState(Date.now())
 
   useEffect(() => {
@@ -233,23 +240,22 @@ function PollingInfoBar({ mode, lastRefreshed }: { mode: MachineMode; lastRefres
     return () => clearInterval(t)
   }, [])
 
-  // ADR-007과 동일한 낮/새벽 구분 (KST 07~22시 낙)
+  // poll_tick 미수신 시 mode 기반 기본값 (첫 poll_tick 도착 전 표시용)
   const kstHour = (new Date(now).getUTCHours() + 9) % 24
   const isNight = kstHour < 7 || kstHour >= 22
   const dayIntervals: Record<MachineMode, number> = { A: 480, B: 120, C: 60 }
-  const intervalSec = isNight ? 900 : dayIntervals[mode]
+  const defaultInterval = isNight ? 900 : dayIntervals[mode]
 
-  const elapsed = Math.floor((now - lastRefreshed.getTime()) / 1000)
+  const tickAt = pollTick?.at ?? (now - defaultInterval * 1000) // 수신 전이면 마치 마지막 poll이 방금 일어난 것처럼
+  const intervalSec = pollTick?.intervalSec ?? defaultInterval
+  const elapsed = Math.floor((now - tickAt) / 1000)
   const remaining = Math.max(0, intervalSec - elapsed)
   const nextText = remaining <= 3 ? '잠시 후' : `${remaining}초 후`
-
-  const intervalLabel = isNight
-    ? '900초 (새벽)'
-    : `${intervalSec}초 (낙 07~22시)`
+  const synced = pollTick !== null
 
   return (
     <div style={styles.pollingBar}>
-      <span>IoT 감지 주기: {intervalLabel}</span>
+      <span>IoT 감지 주기: {intervalSec}초{synced ? '' : ' (동기화 대기 중…)'}</span>
       <span>세탁기 정보 반영: {nextText} 갱신 예정 · 실제 변경 시에만 적용</span>
     </div>
   )
