@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     gmail_app_password: str = ""
     iot_device_key: str = ""
 
+    smartthings_pat: str = ""
+    power_threshold_w: float = 100.0  # fly.toml [env]에서 설정, 런타임 변경은 PATCH /admin/settings
+
     model_config = {"env_file": ".env", "extra": "ignore"}  # type: ignore[misc]
 
 

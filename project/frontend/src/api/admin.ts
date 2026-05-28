@@ -12,6 +12,11 @@ export interface AdminMachine {
   reserved_until: string | null
 }
 
+export interface PowerDataPoint {
+  timestamp: string
+  power_w: number
+}
+
 export function adminGetMachines(token: string): Promise<AdminMachine[]> {
   return authFetch('/admin/machines', token)
 }
@@ -22,4 +27,8 @@ export function adminSetStatus(token: string, machineId: number, status: Machine
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
   })
+}
+
+export function adminGetPowerHistory(token: string, machineId: number, hours = 24): Promise<PowerDataPoint[]> {
+  return authFetch(`/admin/machines/${machineId}/power-history?hours=${hours}`, token)
 }

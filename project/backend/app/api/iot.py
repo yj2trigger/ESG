@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core.database import SessionLocal, get_db
-from app.repositories import machine_repo
+from app.repositories import machine_repo, machine_status_log_repo
 
 router = APIRouter(prefix="/iot", tags=["iot"])
 
@@ -30,7 +30,6 @@ async def _handle_available(gender: str) -> None:
 
 
 async def _handle_in_use(gender: str) -> None:
-    from app.api.ws import broadcast_queue_positions
     from app.core.ws_manager import manager
     from app.services.machine_service import get_dashboard
     db = SessionLocal()
@@ -53,12 +52,25 @@ async def receive_machine_signal(
     if not machine:
         raise HTTPException(status_code=404, detail="머신을 찾을 수 없습니다")
 
+    previous_status = machine.status
     new_status = "in_use" if body.is_running else "available"
+    changed = previous_status != new_status
 
-    if machine.status == new_status:
+    if changed:
+        machine_repo.set_status(db, machine, new_status)
+
+    machine_status_log_repo.create(
+        db,
+        machine,
+        new_status,
+        "iot",
+        previous_status=previous_status,
+        is_running=body.is_running,
+        changed=changed,
+    )
+
+    if not changed:
         return {"machine_id": machine_id, "status": new_status, "changed": False}
-
-    machine_repo.set_status(db, machine, new_status)
 
     gender = machine.gender_restriction
     genders = ["male", "female"] if gender is None else [gender]
