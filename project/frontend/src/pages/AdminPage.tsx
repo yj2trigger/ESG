@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { useAuthStore } from '../store/authStore'
+import { useWebSocket, WsMessage } from '../hooks/useWebSocket'
 import { adminGetMachines, adminSetStatus, adminGetPowerHistory, adminGetSettings, AdminMachine, MachineStatus, PowerDataPoint } from '../api/admin'
 
 const STATUS_LABEL: Record<MachineStatus, string> = {
@@ -75,7 +76,6 @@ function PowerGraph({
   ]
 
   const latest = data.length > 0 ? data[data.length - 1].power_w : null
-  // 히스테리시스 관련: 그래프에서는 단순 시작 임계값(startThreshold) 기준으로 표시
   const isRunning = latest !== null && latest >= startThreshold
 
   const ticks: number[] = []
@@ -98,13 +98,9 @@ function PowerGraph({
       <ResponsiveContainer width="100%" height={160}>
         <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
           <XAxis
-            dataKey="ts"
-            type="number"
-            scale="time"
-            domain={[domainStart, domainEnd]}
-            ticks={ticks}
-            tickFormatter={fmtHHMM}
-            tick={{ fontSize: 10 }}
+            dataKey="ts" type="number" scale="time"
+            domain={[domainStart, domainEnd]} ticks={ticks}
+            tickFormatter={fmtHHMM} tick={{ fontSize: 10 }}
           />
           <YAxis tick={{ fontSize: 10 }} unit="W" width={50} />
           <Tooltip
@@ -112,25 +108,14 @@ function PowerGraph({
             formatter={(v: unknown) => v !== null ? [`${Number(v).toFixed(1)}W`, '전력'] : ['—', '전력']}
           />
           <ReferenceLine
-            y={startThreshold}
-            stroke="#e80"
-            strokeDasharray="4 2"
+            y={startThreshold} stroke="#e80" strokeDasharray="4 2"
             label={{ value: `가동 기준 ${startThreshold}W`, fontSize: 9, fill: '#e80', position: 'insideTopRight' }}
           />
           <ReferenceLine
-            y={stopThreshold}
-            stroke="#4a90d9"
-            strokeDasharray="4 2"
+            y={stopThreshold} stroke="#4a90d9" strokeDasharray="4 2"
             label={{ value: `정지 기준 ${stopThreshold}W`, fontSize: 9, fill: '#4a90d9', position: 'insideBottomRight' }}
           />
-          <Line
-            type="monotone"
-            dataKey="power"
-            stroke="#4a90d9"
-            dot={false}
-            strokeWidth={1.5}
-            connectNulls={false}
-          />
+          <Line type="monotone" dataKey="power" stroke="#4a90d9" dot={false} strokeWidth={1.5} connectNulls={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -145,8 +130,10 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null)
   const [updating, setUpdating] = useState<number | null>(null)
   const [expandedGraphs, setExpandedGraphs] = useState<Set<number>>(new Set())
-  const [startThreshold, setStartThreshold] = useState(20)
+  const [startThreshold, setStartThreshold] = useState(10)   // config 기본값와 동기화
   const [stopThreshold, setStopThreshold] = useState(5)
+
+  const token = user?.token ?? null
 
   useEffect(() => {
     if (!user || user.role !== 'admin') {
@@ -156,6 +143,22 @@ export default function AdminPage() {
     load()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // machines_updated WS 수신 시 머신 목록 자동 새로고침
+  useWebSocket(token, (msg: WsMessage) => {
+    if (msg.type === 'machines_updated') {
+      reloadMachines()
+    }
+  })
+
+  const reloadMachines = async () => {
+    if (!user) return
+    try {
+      setMachines(await adminGetMachines(user.token))
+    } catch {
+      // silent — 전체 로드 실패 시만 에러 표시
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -208,12 +211,13 @@ export default function AdminPage() {
     <div style={styles.container}>
       <header style={styles.header}>
         <span style={styles.title}>관리자 — 세탁기 상태</span>
-        <button style={styles.backBtn} onClick={() => navigate('/') }>← 대시보드</button>
+        <button style={styles.backBtn} onClick={() => navigate('/')}>← 대시보드</button>
       </header>
 
       <main style={styles.main}>
         <div style={styles.thresholdInfo}>
           가동 시작: <strong>{startThreshold}W</strong> · 정지 판단: <strong>{stopThreshold}W</strong>
+          <span style={{ marginLeft: '0.75rem', color: '#bbb' }}>· WebSocket 실시간 연동</span>
         </div>
         {Object.entries(byFloor).sort(([a], [b]) => Number(a) - Number(b)).map(([floor, ms]) => (
           <div key={floor} style={styles.floorSection}>
@@ -231,10 +235,7 @@ export default function AdminPage() {
                     </span>
                   </div>
                   <div style={styles.btnGroup}>
-                    <button
-                      style={styles.graphBtn}
-                      onClick={() => toggleGraph(m.id)}
-                    >
+                    <button style={styles.graphBtn} onClick={() => toggleGraph(m.id)}>
                       {expandedGraphs.has(m.id) ? '▲ 그래프' : '▼ 그래프'}
                     </button>
                     {ALL_STATUSES.filter((s) => s !== m.status).map((s) => (
