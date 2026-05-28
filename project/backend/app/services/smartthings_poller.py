@@ -34,10 +34,14 @@ def _parse_device_map() -> dict[int, str]:
 
 
 def _calc_interval(mode: str) -> float:
+    """ADR-007: 이용 가능 세탁기 적을수록 polling 빈도 높임.
+    Mode C(0대) = 대기자 있음 → 60s (가장 짧음)
+    Mode A(4대+) = 여유 있음 → 480s (가장 김)
+    야간(22-07 KST) = 900s"""
     kst_hour = (datetime.now(timezone.utc).hour + 9) % 24
     if kst_hour < 7 or kst_hour >= 22:
-        return 15 * 60.0
-    return {"A": 60.0, "B": 120.0, "C": 480.0}.get(mode, 120.0)
+        return 900.0
+    return {"A": 480.0, "B": 120.0, "C": 60.0}.get(mode, 120.0)
 
 
 async def _apply_state_change(machine_id: int, is_running: bool) -> None:
