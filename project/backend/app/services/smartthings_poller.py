@@ -194,7 +194,6 @@ async def poll_loop() -> None:
     while True:
         now = time.time()
 
-        # priority 목록 갱신 및 poll_tick (fast_sec마다)
         if now - last_priority_refresh >= fast_sec:
             priority_ids = _get_priority_machine_ids(device_map)
             last_priority_refresh = now
@@ -207,18 +206,19 @@ async def poll_loop() -> None:
                     await manager.broadcast(gender, {
                         "type": "poll_tick",
                         "next_interval_sec": next_tick,
+                        "fast_interval_sec": int(fast_sec),
+                        "slow_interval_sec": int(slow_sec),
+                        "priority_count": len(priority_ids),
                     })
             except Exception as e:
                 logger.warning(f"poll_tick 브로드쾐스트 실패: {e}")
 
-        # due 기기 polling
         for machine_id, device_id in device_map.items():
             interval = fast_sec if machine_id in priority_ids else slow_sec
             if now - _last_polled.get(machine_id, 0) >= interval:
                 await _poll_single_machine(machine_id, device_id, start_threshold, stop_threshold)
                 _last_polled[machine_id] = time.time()
 
-        # 일별 로그 정리
         if now - _last_cleanup > 86400:
             try:
                 db = SessionLocal()

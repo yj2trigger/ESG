@@ -9,25 +9,26 @@ import { MachineMode, FloorSummary, MachineDetail } from '../types/machine'
 
 const GENDER_LABEL: Record<string, string> = { male: '남성', female: '여성' }
 
-// 백엔드 datetime 컬럼이 timezone 없이 직렬화됨 → JS가 로컬시간 해석 → UTC로 강제
 function asUtc(s: string): Date {
   return new Date(s.endsWith('Z') || s.includes('+') ? s : s + 'Z')
 }
 
 interface PendingOffer {
   machine: MachineDetail
-  accept_until: string // ISO string, 5 min window
+  accept_until: string
 }
 
 interface ActiveReservation {
   machine: MachineDetail
-  reserved_until: string // ISO string, 10 min window
+  reserved_until: string
 }
 
-// poll_tick 수신 시점 + 다음 주기
 export interface PollTick {
-  at: number        // Date.now() at receipt
+  at: number
   intervalSec: number
+  fastIntervalSec: number
+  slowIntervalSec: number
+  priorityCount: number
 }
 
 export default function DashboardPage() {
@@ -60,14 +61,10 @@ export default function DashboardPage() {
     if (msg.type === 'machines_updated') {
       refresh()
     } else if (msg.type === 'queue_offer' && msg.machine && msg.accept_until) {
-      setPendingOffer({
-        machine: msg.machine as MachineDetail,
-        accept_until: msg.accept_until,
-      })
+      setPendingOffer({ machine: msg.machine as MachineDetail, accept_until: msg.accept_until })
       setQueueInfo(null)
     } else if (msg.type === 'queue_offer_expired') {
       setPendingOffer(null)
-      // Re-fetch queue status to show updated position
       if (token) {
         getQueueStatus(token).then((status) => {
           if (status.in_queue && status.queue_position != null && status.total != null) {
@@ -82,31 +79,31 @@ export default function DashboardPage() {
       setMachineStartedToast({ floor: msg.machine.floor, machine_number: msg.machine.machine_number })
       setActiveReservation(null)
     } else if (msg.type === 'poll_tick' && msg.next_interval_sec) {
-      setPollTick({ at: Date.now(), intervalSec: msg.next_interval_sec })
+      setPollTick({
+        at: Date.now(),
+        intervalSec: msg.next_interval_sec,
+        fastIntervalSec: msg.fast_interval_sec ?? msg.next_interval_sec,
+        slowIntervalSec: msg.slow_interval_sec ?? msg.next_interval_sec,
+        priorityCount: msg.priority_count ?? 0,
+      })
     }
   })
 
   useEffect(() => {
     refresh()
     if (!token) return
-
-    // 소프트 예약 + 대기열 상태 복원 (병렬)
     Promise.all([getMyReservation(token), getQueueStatus(token)]).then(([res, status]) => {
       if (status.in_queue && status.is_notified && status.accept_until && res.active && res.assigned_machine) {
-        // 5분 수락 대기 중
         setPendingOffer({ machine: res.assigned_machine, accept_until: status.accept_until })
       } else if (res.active && res.assigned_machine && res.reserved_until) {
-        // 10분 확정 예약 중
         setActiveReservation({ machine: res.assigned_machine, reserved_until: res.reserved_until })
       } else if (status.in_queue && status.queue_position != null && status.total != null) {
-        // 대기열 대기 중
         setQueueInfo({ queue_position: status.queue_position, total: status.total, message: '' })
       }
     }).catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
-  // Auto-clear activeReservation when reserved_until passes
   useEffect(() => {
     if (!activeReservation) return
     const ms = asUtc(activeReservation.reserved_until).getTime() - Date.now()
@@ -123,9 +120,7 @@ export default function DashboardPage() {
     <div style={styles.container}>
       <header style={styles.header}>
         <span style={styles.headerTitle}>세탁기 현황</span>
-        <span style={styles.userInfo}>
-          {user?.username} ({GENDER_LABEL[user?.gender ?? '']})
-        </span>
+        <span style={styles.userInfo}>{user?.username} ({GENDER_LABEL[user?.gender ?? '']})</span>
         {user?.role === 'admin' && (
           <button style={styles.adminBtn} onClick={() => navigate('/admin')}>관리</button>
         )}
@@ -133,15 +128,9 @@ export default function DashboardPage() {
       </header>
 
       <main style={styles.main}>
-        {/* 세탁기 작동 시작 토스트 (10초 자동 소멸) */}
         {machineStartedToast && (
-          <MachineStartedToast
-            machine={machineStartedToast}
-            onDismiss={() => setMachineStartedToast(null)}
-          />
+          <MachineStartedToast machine={machineStartedToast} onDismiss={() => setMachineStartedToast(null)} />
         )}
-
-        {/* 5분 수락 대기 배너 */}
         {pendingOffer && (
           <PendingOfferBanner
             offer={pendingOffer}
@@ -154,14 +143,10 @@ export default function DashboardPage() {
             onExpired={() => setPendingOffer(null)}
           />
         )}
-
-        {/* 소프트 예약 확정 배너 (10분 동안 유지) */}
-        {activeReservation && (
-          <ActiveReservationBanner reservation={activeReservation} />
-        )}
+        {activeReservation && <ActiveReservationBanner reservation={activeReservation} />}
 
         <ModeBanner mode={data.mode} />
-        <PollingInfoBar mode={data.mode} pollTick={pollTick} />
+        <PollingInfoBar pollTick={pollTick} />
 
         {data.mode === 'A' && !queueInfo && !pendingOffer && <ModeAView floors={data.floors} />}
         {data.mode === 'B' && !activeReservation && !queueInfo && !pendingOffer && (
@@ -193,38 +178,24 @@ export default function DashboardPage() {
 
 // ── MachineStartedToast ──────────────────────────────────────
 
-function MachineStartedToast({
-  machine,
-  onDismiss,
-}: {
-  machine: { floor: number; machine_number: number }
-  onDismiss: () => void
-}) {
+function MachineStartedToast({ machine, onDismiss }: { machine: { floor: number; machine_number: number }; onDismiss: () => void }) {
   const [secsLeft, setSecsLeft] = useState(10)
-
   useEffect(() => {
     const interval = setInterval(() => {
       setSecsLeft((s) => {
-        if (s <= 1) {
-          clearInterval(interval)
-          onDismiss()
-          return 0
-        }
+        if (s <= 1) { clearInterval(interval); onDismiss(); return 0 }
         return s - 1
       })
     }, 1000)
     return () => clearInterval(interval)
   }, [onDismiss])
-
   return (
     <div style={styles.machineStartedToast}>
       <div style={styles.toastProgressTrack}>
         <div style={{ ...styles.toastProgressBar, width: `${(secsLeft / 10) * 100}%` }} />
       </div>
       <strong style={{ fontSize: '1.05rem' }}>세탁기 작동이 시작되었습니다</strong>
-      <span style={{ fontSize: '0.9rem', color: '#444' }}>
-        {machine.floor}층 {machine.machine_number}번 세탁기
-      </span>
+      <span style={{ fontSize: '0.9rem', color: '#444' }}>{machine.floor}층 {machine.machine_number}번 세탁기</span>
       <span style={{ fontSize: '0.75rem', color: '#888' }}>{secsLeft}초 후 사라집니다</span>
     </div>
   )
@@ -232,103 +203,69 @@ function MachineStartedToast({
 
 // ── PollingInfoBar ───────────────────────────────────────────
 
-function PollingInfoBar({ mode, pollTick }: { mode: MachineMode; pollTick: PollTick | null }) {
+function PollingInfoBar({ pollTick }: { pollTick: PollTick | null }) {
   const [now, setNow] = useState(Date.now())
-
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
-  // poll_tick 미수신 시 mode 기반 기본값 (첫 poll_tick 도착 전 표시용)
-  const kstHour = (new Date(now).getUTCHours() + 9) % 24
-  const isNight = kstHour < 7 || kstHour >= 22
-  const dayIntervals: Record<MachineMode, number> = { A: 480, B: 120, C: 60 }
-  const defaultInterval = isNight ? 900 : dayIntervals[mode]
+  if (!pollTick) {
+    return (
+      <div style={styles.pollingBar}>
+        <span>IoT 감지 주기: 동기화 대기 중…</span>
+      </div>
+    )
+  }
 
-  const tickAt = pollTick?.at ?? (now - defaultInterval * 1000) // 수신 전이면 마치 마지막 poll이 방금 일어난 것처럼
-  const intervalSec = pollTick?.intervalSec ?? defaultInterval
-  const elapsed = Math.floor((now - tickAt) / 1000)
+  const { at, intervalSec, fastIntervalSec, slowIntervalSec, priorityCount } = pollTick
+  const elapsed = Math.floor((now - at) / 1000)
   const remaining = Math.max(0, intervalSec - elapsed)
   const nextText = remaining <= 3 ? '잠시 후' : `${remaining}초 후`
-  const synced = pollTick !== null
 
   return (
     <div style={styles.pollingBar}>
-      <span>IoT 감지 주기: {intervalSec}초{synced ? '' : ' (동기화 대기 중…)'}</span>
       <span>세탁기 정보 반영: {nextText} 갱신 예정 · 실제 변경 시에만 적용</span>
+      <span>IoT 감지 주기: 우선 기기({priorityCount}대) {fastIntervalSec}초 · 일반 기기 {slowIntervalSec}초</span>
     </div>
   )
 }
 
 // ── PendingOfferBanner ────────────────────────────────────────
 
-function PendingOfferBanner({
-  offer,
-  token,
-  onAccepted,
-  onExpired,
-}: {
-  offer: PendingOffer
-  token: string
-  onAccepted: (res: MachineRequestResponse) => void
-  onExpired: () => void
+function PendingOfferBanner({ offer, token, onAccepted, onExpired }: {
+  offer: PendingOffer; token: string
+  onAccepted: (res: MachineRequestResponse) => void; onExpired: () => void
 }) {
-  const [secsLeft, setSecsLeft] = useState(() => {
-    const ms = asUtc(offer.accept_until).getTime() - Date.now()
-    return Math.max(0, Math.floor(ms / 1000))
-  })
+  const [secsLeft, setSecsLeft] = useState(() => Math.max(0, Math.floor((asUtc(offer.accept_until).getTime() - Date.now()) / 1000)))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const expiredRef = useRef(false)
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const ms = asUtc(offer.accept_until).getTime() - Date.now()
-      const secs = Math.max(0, Math.floor(ms / 1000))
+      const secs = Math.max(0, Math.floor((asUtc(offer.accept_until).getTime() - Date.now()) / 1000))
       setSecsLeft(secs)
-      if (secs === 0 && !expiredRef.current) {
-        expiredRef.current = true
-        clearInterval(interval)
-        onExpired()
-      }
+      if (secs === 0 && !expiredRef.current) { expiredRef.current = true; clearInterval(interval); onExpired() }
     }, 500)
     return () => clearInterval(interval)
   }, [offer.accept_until, onExpired])
 
   const handleAccept = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await acceptQueueOffer(token)
-      onAccepted(res)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '수락 실패')
-      setLoading(false)
-    }
+    setLoading(true); setError(null)
+    try { onAccepted(await acceptQueueOffer(token)) }
+    catch (e) { setError(e instanceof Error ? e.message : '수락 실패'); setLoading(false) }
   }
 
-  const mins = Math.floor(secsLeft / 60)
-  const secs = secsLeft % 60
-
+  const mins = Math.floor(secsLeft / 60), secs = secsLeft % 60
   return (
     <div style={styles.offerBanner}>
       <strong style={{ fontSize: '1.05rem' }}>세탁기 배정 알림!</strong>
-      <span style={styles.offerMachine}>
-        {offer.machine.floor}층 {offer.machine.machine_number}번
-      </span>
-      <span style={styles.offerTimer}>
-        수락 가능 시간 {mins}:{String(secs).padStart(2, '0')} 남음
-      </span>
-      <p style={{ ...styles.actionNote, color: '#c60' }}>
-        5분 이내로 수락하셔야 합니다. 시간이 지나면 대기열 맨 뒤로 이동됩니다.
-      </p>
+      <span style={styles.offerMachine}>{offer.machine.floor}층 {offer.machine.machine_number}번</span>
+      <span style={styles.offerTimer}>수락 가능 시간 {mins}:{String(secs).padStart(2, '0')} 남음</span>
+      <p style={{ ...styles.actionNote, color: '#c60' }}>5분 이내로 수락하셔야 합니다. 시간이 지나면 대기열 맨 뒤로 이동됩니다.</p>
       {error && <p style={styles.errorText}>{error}</p>}
-      <button
-        style={{ ...styles.actionBtn, background: '#2a7' }}
-        onClick={handleAccept}
-        disabled={loading || secsLeft === 0}
-      >
+      <button style={{ ...styles.actionBtn, background: '#2a7' }} onClick={handleAccept} disabled={loading || secsLeft === 0}>
         {loading ? '수락 중...' : '수락하기'}
       </button>
     </div>
@@ -338,34 +275,18 @@ function PendingOfferBanner({
 // ── ActiveReservationBanner ───────────────────────────────────
 
 function ActiveReservationBanner({ reservation }: { reservation: ActiveReservation }) {
-  const [secsLeft, setSecsLeft] = useState(() => {
-    const ms = asUtc(reservation.reserved_until).getTime() - Date.now()
-    return Math.max(0, Math.floor(ms / 1000))
-  })
-
+  const [secsLeft, setSecsLeft] = useState(() => Math.max(0, Math.floor((asUtc(reservation.reserved_until).getTime() - Date.now()) / 1000)))
   useEffect(() => {
-    const interval = setInterval(() => {
-      const ms = asUtc(reservation.reserved_until).getTime() - Date.now()
-      setSecsLeft(Math.max(0, Math.floor(ms / 1000)))
-    }, 1000)
+    const interval = setInterval(() => setSecsLeft(Math.max(0, Math.floor((asUtc(reservation.reserved_until).getTime() - Date.now()) / 1000))), 1000)
     return () => clearInterval(interval)
   }, [reservation.reserved_until])
-
-  const mins = Math.floor(secsLeft / 60)
-  const secs = secsLeft % 60
-
+  const mins = Math.floor(secsLeft / 60), secs = secsLeft % 60
   return (
     <div style={styles.reservationBanner}>
       <strong>세탁기가 배정되었습니다!</strong>
-      <span style={styles.offerMachine}>
-        {reservation.machine.floor}층 {reservation.machine.machine_number}번
-      </span>
-      <span style={styles.offerTimer}>
-        예약 유효 시간 {mins}:{String(secs).padStart(2, '0')} 남음
-      </span>
-      <p style={styles.actionNote}>
-        위 시간 이내에 세탁기를 사용해주세요.<br />시간이 지나면 예약이 자동으로 해제됩니다.
-      </p>
+      <span style={styles.offerMachine}>{reservation.machine.floor}층 {reservation.machine.machine_number}번</span>
+      <span style={styles.offerTimer}>예약 유효 시간 {mins}:{String(secs).padStart(2, '0')} 남음</span>
+      <p style={styles.actionNote}>위 시간 이내에 세탁기를 사용해주세요.<br />시간이 지나면 예약이 자동으로 해제됩니다.</p>
     </div>
   )
 }
@@ -408,20 +329,12 @@ function ModeAView({ floors }: { floors: FloorSummary[] }) {
 function ModeBView({ token, onAssigned }: { token: string; onAssigned: (res: MachineRequestResponse) => void }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
   const handleRequest = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await requestMachine(token)
-      onAssigned(res)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '오류 발생')
-    } finally {
-      setLoading(false)
-    }
+    setLoading(true); setError(null)
+    try { onAssigned(await requestMachine(token)) }
+    catch (e) { setError(e instanceof Error ? e.message : '오류 발생') }
+    finally { setLoading(false) }
   }
-
   return (
     <div style={styles.actionBox}>
       <p style={styles.actionDesc}>지금 바로 세탁기를 배정받으실 수 있습니다</p>
@@ -429,87 +342,47 @@ function ModeBView({ token, onAssigned }: { token: string; onAssigned: (res: Mac
       <button style={styles.actionBtn} onClick={handleRequest} disabled={loading}>
         {loading ? '배정 중...' : '배정받기'}
       </button>
-      <p style={styles.actionNote}>
-        배정 후 10분 이내에 세탁기를 찾아가셔야 합니다.<br />시간이 지나면 자동으로 해제됩니다.
-      </p>
+      <p style={styles.actionNote}>배정 후 10분 이내에 세탁기를 찾아가셔야 합니다.<br />시간이 지나면 자동으로 해제됩니다.</p>
     </div>
   )
 }
 
 // ── Mode C ───────────────────────────────────────────────────
 
-function ModeCView({
-  token,
-  username,
-  onDone,
-  livePosition,
-  liveTotal,
-  queueInfo,
-  setQueueInfo,
-}: {
-  token: string
-  username: string
-  onDone: () => void
-  livePosition: number | null
-  liveTotal: number | null
-  queueInfo: QueueJoinResponse | null
-  setQueueInfo: (v: QueueJoinResponse | null) => void
+function ModeCView({ token, username, onDone, livePosition, liveTotal, queueInfo, setQueueInfo }: {
+  token: string; username: string; onDone: () => void
+  livePosition: number | null; liveTotal: number | null
+  queueInfo: QueueJoinResponse | null; setQueueInfo: (v: QueueJoinResponse | null) => void
 }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleJoin = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await joinQueue(token)
-      setQueueInfo(res)
-      onDone()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '오류 발생')
-    } finally {
-      setLoading(false)
-    }
+    setLoading(true); setError(null)
+    try { setQueueInfo(await joinQueue(token)); onDone() }
+    catch (e) { setError(e instanceof Error ? e.message : '오류 발생') }
+    finally { setLoading(false) }
   }
-
   const handleLeave = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      await leaveQueue(token)
-      setQueueInfo(null)
-      onDone()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '오류 발생')
-    } finally {
-      setLoading(false)
-    }
+    setLoading(true); setError(null)
+    try { await leaveQueue(token); setQueueInfo(null); onDone() }
+    catch (e) { setError(e instanceof Error ? e.message : '오류 발생') }
+    finally { setLoading(false) }
   }
 
   if (queueInfo) {
-    const displayPos = livePosition ?? queueInfo.queue_position
-    const displayTotal = liveTotal ?? queueInfo.total
     return (
       <div style={styles.resultBox}>
         <p style={styles.resultTitle}>대기열에 등록되었습니다</p>
-        <p style={styles.resultBig}>현재 {displayPos}번째</p>
-        <p style={{ ...styles.resultNote, fontSize: '0.85rem', color: '#666' }}>
-          전체 대기 {displayTotal}명
-        </p>
-        <p style={styles.resultNote}>
-          세탁기가 비면 배정 알림이 옵니다.<br />알림 수신 후 5분 이내로 수락하셔야 합니다.
-        </p>
-        <button
-          style={{ ...styles.actionBtn, background: '#888', marginTop: '1rem' }}
-          onClick={handleLeave}
-          disabled={loading}
-        >
+        <p style={styles.resultBig}>현재 {livePosition ?? queueInfo.queue_position}번째</p>
+        <p style={{ ...styles.resultNote, fontSize: '0.85rem', color: '#666' }}>전체 대기 {liveTotal ?? queueInfo.total}명</p>
+        <p style={styles.resultNote}>세탁기가 비면 배정 알림이 옵니다.<br />알림 수신 후 5분 이내로 수락하셔야 합니다.</p>
+        <button style={{ ...styles.actionBtn, background: '#888', marginTop: '1rem' }} onClick={handleLeave} disabled={loading}>
           {loading ? '취소 중...' : '대기 취소'}
         </button>
       </div>
     )
   }
-
   return (
     <div style={styles.actionBox}>
       <p style={styles.actionDesc}>현재 이용 가능한 세탁기가 없습니다</p>
@@ -517,11 +390,7 @@ function ModeCView({
       <button style={styles.actionBtn} onClick={handleJoin} disabled={loading}>
         {loading ? '등록 중...' : '대기열 등록'}
       </button>
-      <p style={styles.actionNote}>
-        세탁기가 비면 배정 알림이 옵니다.<br />
-        알림 수신 후 5분 이내로 수락하시면<br />
-        10분동안 <strong>{username}</strong>님에게만 이용 가능하다고 표시됩니다.
-      </p>
+      <p style={styles.actionNote}>세탁기가 비면 배정 알림이 옵니다.<br />알림 수신 후 5분 이내로 수락하시면<br />10분동안 <strong>{username}</strong>님에게만 이용 가능하다고 표시됩니다.</p>
     </div>
   )
 }
@@ -529,11 +398,7 @@ function ModeCView({
 // ── helpers ──────────────────────────────────────────────────
 
 function Screen({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>
-      {children}
-    </div>
-  )
+  return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>{children}</div>
 }
 
 // ── styles ───────────────────────────────────────────────────

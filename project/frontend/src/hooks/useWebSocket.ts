@@ -11,7 +11,11 @@ export interface WsMessage {
   message?: string
   position?: number
   total?: number
+  // poll_tick 필드
   next_interval_sec?: number
+  fast_interval_sec?: number
+  slow_interval_sec?: number
+  priority_count?: number
 }
 
 export function useWebSocket(token: string | null, onMessage: (msg: WsMessage) => void) {
