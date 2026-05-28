@@ -59,6 +59,12 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
+      - name: Set Fly.io secrets
+        if: ${{ secrets.SMARTTHINGS_PAT != '' }}
+        run: flyctl secrets set SMARTTHINGS_PAT=${{ secrets.SMARTTHINGS_PAT }} --app esg-laundry-checker
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
       - name: Deploy backend
         run: flyctl deploy --remote-only --strategy=immediate
         env:
