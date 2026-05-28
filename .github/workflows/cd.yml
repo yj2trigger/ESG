@@ -61,11 +61,16 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Set Fly.io secrets
-        run: flyctl secrets set SMARTTHINGS_PAT="$SMARTTHINGS_PAT" --app esg-laundry-checker
+        run: |
+          flyctl secrets set \
+            SMARTTHINGS_PAT="$SMARTTHINGS_PAT" \
+            SMARTTHINGS_DEVICE_01="$SMARTTHINGS_DEVICE_01" \
+            --app esg-laundry-checker
         continue-on-error: true
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           SMARTTHINGS_PAT: ${{ secrets.SMARTTHINGS_PAT }}
+          SMARTTHINGS_DEVICE_01: ${{ secrets.SMARTTHINGS_DEVICE_01 }}
 
       - name: Deploy backend
         run: flyctl deploy --remote-only --strategy=immediate
