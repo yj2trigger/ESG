@@ -6,16 +6,16 @@ from datetime import datetime, timezone
 
 from app.config import settings
 from app.core.database import SessionLocal
-from app.repositories import machine_power_log_repo, machine_repo
+from app.repositories import machine_power_log_repo, machine_repo, system_settings_repo
 from app.services import smartthings_client
 from app.services.machine_service import get_current_mode
 
 logger = logging.getLogger(__name__)
 
-power_threshold_w: float = settings.power_threshold_w  # admin API로 런타임 변경 가능
-
 _last_states: dict[int, bool] = {}
 _last_cleanup: float = 0.0
+
+_THRESHOLD_KEY = "power_threshold_w"
 
 
 def _parse_device_map() -> dict[int, str]:
@@ -83,6 +83,7 @@ async def poll_loop() -> None:
         db = SessionLocal()
         try:
             mode = get_current_mode(db, "male")
+            threshold = system_settings_repo.get_float(db, _THRESHOLD_KEY, settings.power_threshold_w)
         finally:
             db.close()
 
@@ -98,10 +99,13 @@ async def poll_loop() -> None:
                 finally:
                     db.close()
 
-                is_running = power_w >= power_threshold_w
+                is_running = power_w >= threshold
                 prev = _last_states.get(machine_id)
                 if prev != is_running:
-                    logger.info(f"machine {machine_id}: {'가동' if is_running else '정지'} ({power_w:.1f}W, 기준 {power_threshold_w}W)")
+                    logger.info(
+                        f"machine {machine_id}: {'가동' if is_running else '정지'} "
+                        f"({power_w:.1f}W, 기준 {threshold}W)"
+                    )
                     _last_states[machine_id] = is_running
                     await _apply_state_change(machine_id, is_running)
 
