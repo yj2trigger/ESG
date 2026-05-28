@@ -252,7 +252,7 @@ const styles: Record<string, React.CSSProperties> = {
   genderTag: { fontSize: '0.75rem', padding: '0.1rem 0.4rem', borderRadius: '4px', background: '#f0f0f0', color: '#555' },
   statusDot: { fontSize: '0.85rem' },
   btnGroup: { display: 'flex', gap: '0.4rem', flexWrap: 'wrap' },
-  statusBtn: { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid', borderRadius: '4px', cursor: 'pointer', background: '#fff' },
+  statusBtn: { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid', borderRadius: '4px', cursor: 'pointer', background: '#fff', minWidth: '4.8rem', textAlign: 'center' },
   graphBtn: { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #4a90d9', borderRadius: '4px', cursor: 'pointer', background: '#fff', color: '#4a90d9' },
   graphContainer: { background: '#f8f9fa', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.5rem', border: '1px solid #e9ecef' },
   graphHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.85rem' },
