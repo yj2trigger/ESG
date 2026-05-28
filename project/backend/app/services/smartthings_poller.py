@@ -15,10 +15,11 @@ logger = logging.getLogger(__name__)
 _last_states: dict[int, bool] = {}
 _last_cleanup: float = 0.0
 
+_SOFT_RESERVED_POLL_SEC = 30.0  # 소프트 예약 중 고속 polling 주기
+
 
 def _parse_device_map() -> dict[int, str]:
-    """SMARTTHINGS_DEVICE_01, SMARTTHINGS_DEVICE_02 형식 환경변수 자동 파싱.
-    숫자 부분 = ESG machine_id."""
+    """SMARTTHINGS_DEVICE_01, SMARTTHINGS_DEVICE_02 형식 환경변수 자동 파싱."""
     result: dict[int, str] = {}
     prefix = "SMARTTHINGS_DEVICE_"
     for key, value in os.environ.items():
@@ -31,8 +32,10 @@ def _parse_device_map() -> dict[int, str]:
     return result
 
 
-def _calc_interval(mode: str) -> float:
-    """ADR-007: 이용 가능 세탁기 적을수록 polling 빈도 높임."""
+def _calc_interval(mode: str, has_soft_reserved: bool) -> float:
+    """ADR-007 기반. 소프트 예약 중이면 30초 고속 polling으로 전환."""
+    if has_soft_reserved:
+        return _SOFT_RESERVED_POLL_SEC
     kst_hour = (datetime.now(timezone.utc).hour + 9) % 24
     if kst_hour < 7 or kst_hour >= 22:
         return 900.0
@@ -40,7 +43,6 @@ def _calc_interval(mode: str) -> float:
 
 
 def _get_mode() -> str:
-    """DB에서 mode 읽기. 실패 시 기본값 A 반환."""
     try:
         db = SessionLocal()
         try:
@@ -48,8 +50,28 @@ def _get_mode() -> str:
         finally:
             db.close()
     except Exception as e:
-        logger.warning(f"mode 조회 실패, 기본값 A 사용: {e}")
+        logger.warning(f"mode 조회 실패: {e}")
         return "A"
+
+
+def _check_soft_reserved() -> bool:
+    """active soft_reserved 머신 존재 여부."""
+    try:
+        db = SessionLocal()
+        try:
+            now = datetime.now(timezone.utc)
+            from app.models.machine import Machine
+            count = (
+                db.query(Machine)
+                .filter(Machine.status == "soft_reserved", Machine.reserved_until > now)
+                .count()
+            )
+            return count > 0
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"soft_reserved 확인 실패: {e}")
+        return False
 
 
 async def _apply_state_change(machine_id: int, is_running: bool) -> None:
@@ -109,14 +131,17 @@ async def poll_loop() -> None:
         logger.info("SMARTTHINGS_DEVICE_XX 미설정 — polling 비활성")
         return
 
-    # config.py 값 직접 사용 (DB 뾁 없음)
-    start_threshold = settings.power_threshold_w  # 20W
+    start_threshold = settings.power_threshold_w  # 10W
     stop_threshold = settings.stop_threshold_w    # 5W
     logger.info(f"SmartThings polling 시작: {device_map} | start={start_threshold}W stop={stop_threshold}W")
 
     while True:
         mode = _get_mode()
-        interval = _calc_interval(mode)
+        has_soft_reserved = _check_soft_reserved()
+        interval = _calc_interval(mode, has_soft_reserved)
+
+        if has_soft_reserved:
+            logger.debug(f"soft_reserved 감지 → 고속 polling {interval}s")
 
         for machine_id, device_id in device_map.items():
             try:
@@ -131,9 +156,6 @@ async def poll_loop() -> None:
                 except Exception as e:
                     logger.warning(f"전력 로그 저장 실패 (machine {machine_id}): {e}")
 
-                # 히스테리시스: 이전 상태에 따라 다른 임계값 적용
-                # - 이전 가동 중: power < stop_threshold(5W)일 때만 정지
-                # - 이전 정지/미확인: power >= start_threshold(20W)일 때 가동
                 prev_running = _last_states.get(machine_id)
                 if prev_running is True:
                     is_running = power_w >= stop_threshold
@@ -144,7 +166,7 @@ async def poll_loop() -> None:
                     effective = stop_threshold if prev_running is True else start_threshold
                     logger.info(
                         f"machine {machine_id}: {'가동' if is_running else '정지'} "
-                        f"({power_w:.1f}W, 기준 {effective}W)"
+                        f"({power_w:.1f}W ≥ {effective}W)"
                     )
                     _last_states[machine_id] = is_running
                     try:
@@ -167,7 +189,7 @@ async def poll_loop() -> None:
                 logger.warning(f"오래된 전력 로그 정리 실패: {e}")
             _last_cleanup = now
 
-        next_interval = _calc_interval(mode)
+        next_interval = _calc_interval(mode, _check_soft_reserved())
         try:
             from app.core.ws_manager import manager
             for gender in ["male", "female"]:

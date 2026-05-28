@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     iot_device_key: str = ""
 
     smartthings_pat: str = ""
-    # 시작 임계값: available/soft_reserved → in_use (급수 뱸브 15~30W부터 감지)
-    power_threshold_w: float = 20.0
-    # 정지 임계값: in_use → available (완전 대기 1~5W만 해당, 사이클 중간 정지 3~15W 오전환 방지)
+    # 시작 임계값: 급수 밸브(15~30W) 캐치, 대기(1~8W)와 안정적 구분
+    power_threshold_w: float = 10.0
+    # 정지 임계값: 세탁 사이클 중간 정지(3~15W) 오판단 방지
     stop_threshold_w: float = 5.0
 
     model_config = {"env_file": ".env", "extra": "ignore"}  # type: ignore[misc]
