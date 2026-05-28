@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { useAuthStore } from '../store/authStore'
@@ -21,6 +21,7 @@ const STATUS_COLOR: Record<MachineStatus, string> = {
 const GENDER_LABEL: Record<string, string> = { male: '남', female: '여' }
 const ALL_STATUSES: MachineStatus[] = ['available', 'in_use', 'broken']
 const THRESHOLD_W = 100
+const GRAPH_REFRESH_MS = 60_000
 
 function formatTime(iso: string): string {
   const d = new Date(iso)
@@ -30,13 +31,26 @@ function formatTime(iso: string): string {
 function PowerGraph({ machineId, token }: { machineId: number; token: string }) {
   const [data, setData] = useState<PowerDataPoint[]>([])
   const [loading, setLoading] = useState(true)
+  const [lastFetched, setLastFetched] = useState<Date | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  useEffect(() => {
+  const fetch = () => {
     adminGetPowerHistory(token, machineId, 24)
-      .then(setData)
+      .then((d) => { setData(d); setLastFetched(new Date()) })
       .catch(() => {})
       .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    fetch()
+    intervalRef.current = setInterval(fetch, GRAPH_REFRESH_MS)
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machineId, token])
+
+  const updatedLabel = lastFetched
+    ? `${String(lastFetched.getHours()).padStart(2, '0')}:${String(lastFetched.getMinutes()).padStart(2, '0')}:${String(lastFetched.getSeconds()).padStart(2, '0')} 갱신`
+    : ''
 
   if (loading) return <div style={styles.graphMsg}>불러오는 중...</div>
 
@@ -60,9 +74,12 @@ function PowerGraph({ machineId, token }: { machineId: number; token: string }) 
     <div style={styles.graphContainer}>
       <div style={styles.graphHeader}>
         <span>현재 <strong>{latest.toFixed(1)}W</strong></span>
-        <span style={{ color: isRunning ? '#c33' : '#2a7', fontSize: '0.82rem' }}>
-          {isRunning ? '● 가동 중' : '● 정지'}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ color: '#aaa', fontSize: '0.75rem' }}>{updatedLabel}</span>
+          <span style={{ color: isRunning ? '#c33' : '#2a7', fontSize: '0.82rem' }}>
+            {isRunning ? '● 가동 중' : '● 정지'}
+          </span>
+        </div>
       </div>
       <ResponsiveContainer width="100%" height={160}>
         <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
