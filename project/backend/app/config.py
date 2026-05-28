@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     # 감지 임계값
     power_threshold_w: float = 10.0   # 시작: 급수 밸브(15~30W) 캐치
     stop_threshold_w: float = 5.0    # 정지: 완전 대기(1~5W)만 해당
-    # polling 간격 (초)
-    fast_poll_sec: float = 30.0      # 우선 기기 3대 (soft_reserved / 층별 1대 남은 세탁기)
-    slow_poll_sec: float = 300.0     # 나머지 기기
+    # polling 주기
+    base_poll_sec: float = 120.0        # 일반 기기 polling 간격 (좌)
+    priority_poll_ratio: float = 2.0   # 우선 기기는 일반 대비 이 좌수배 빠르게 (fast = base / ratio)
 
     model_config = {"env_file": ".env", "extra": "ignore"}  # type: ignore[misc]
 

@@ -51,7 +51,6 @@ def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
             priority_ids: set[int] = set()
 
             if available_count > 3:
-                # 층별 available 1대인 층의 세탁기
                 scarce_floors = (
                     db.query(Machine.floor)
                     .filter(Machine.status == "available")
@@ -70,7 +69,6 @@ def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
                     if len(priority_ids) >= 3:
                         break
             else:
-                # soft_reserved 세탁기
                 machines = (
                     db.query(Machine)
                     .filter(
@@ -181,28 +179,27 @@ async def poll_loop() -> None:
 
     start_threshold = settings.power_threshold_w
     stop_threshold = settings.stop_threshold_w
-    fast_sec = settings.fast_poll_sec
-    slow_sec = settings.slow_poll_sec
+    slow_sec = settings.base_poll_sec
+    fast_sec = slow_sec / max(settings.priority_poll_ratio, 1.0)
 
     logger.info(
         f"SmartThings polling 시작: {device_map} | "
         f"start={start_threshold}W stop={stop_threshold}W | "
-        f"fast={fast_sec}s slow={slow_sec}s"
+        f"fast={fast_sec:.0f}s slow={slow_sec:.0f}s (ratio={settings.priority_poll_ratio}x)"
     )
 
     priority_ids: set[int] = set()
-    _last_priority_refresh: float = 0.0
+    last_priority_refresh: float = 0.0
 
     while True:
         now = time.time()
 
-        # priority 기기 목록 갱신 (fast_sec마다)
-        if now - _last_priority_refresh >= fast_sec:
+        # priority 목록 갱신 및 poll_tick (fast_sec마다)
+        if now - last_priority_refresh >= fast_sec:
             priority_ids = _get_priority_machine_ids(device_map)
-            _last_priority_refresh = now
+            last_priority_refresh = now
             logger.debug(f"priority machines: {priority_ids}")
 
-            # poll_tick 브로드쾐스트
             next_tick = int(fast_sec if priority_ids else slow_sec)
             try:
                 from app.core.ws_manager import manager
@@ -214,7 +211,7 @@ async def poll_loop() -> None:
             except Exception as e:
                 logger.warning(f"poll_tick 브로드쾐스트 실패: {e}")
 
-        # due된 기기 polling
+        # due 기기 polling
         for machine_id, device_id in device_map.items():
             interval = fast_sec if machine_id in priority_ids else slow_sec
             if now - _last_polled.get(machine_id, 0) >= interval:
