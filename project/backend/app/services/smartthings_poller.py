@@ -34,14 +34,36 @@ def _parse_device_map() -> dict[int, str]:
 
 
 def _calc_interval(mode: str) -> float:
-    """ADR-007: 이용 가능 세탁기 적을수록 polling 빈도 높임.
-    Mode C(0대) = 대기자 있음 → 60s (가장 짧음)
-    Mode A(4대+) = 여유 있음 → 480s (가장 김)
-    야간(22-07 KST) = 900s"""
+    """ADR-007: 이용 가능 세탁기 적을수록 polling 빈도 높임."""
     kst_hour = (datetime.now(timezone.utc).hour + 9) % 24
     if kst_hour < 7 or kst_hour >= 22:
         return 900.0
     return {"A": 480.0, "B": 120.0, "C": 60.0}.get(mode, 120.0)
+
+
+def _get_mode_and_threshold() -> tuple[str, float]:
+    """DB에서 mode와 threshold 읽기. 실패 시 기본값 반환."""
+    try:
+        db = SessionLocal()
+        try:
+            mode = get_current_mode(db, "male")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"mode 조회 실패, 기본값 A 사용: {e}")
+        mode = "A"
+
+    try:
+        db = SessionLocal()
+        try:
+            threshold = system_settings_repo.get_float(db, _THRESHOLD_KEY, settings.power_threshold_w)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"threshold 조회 실패, 기본값 사용: {e}")
+        threshold = settings.power_threshold_w
+
+    return mode, threshold
 
 
 async def _apply_state_change(machine_id: int, is_running: bool) -> None:
@@ -84,50 +106,48 @@ async def poll_loop() -> None:
     logger.info(f"SmartThings polling 시작: {device_map}")
 
     while True:
-        try:
-            db = SessionLocal()
+        mode, threshold = _get_mode_and_threshold()
+        interval = _calc_interval(mode)
+
+        for machine_id, device_id in device_map.items():
             try:
-                mode = get_current_mode(db, "male")
-                threshold = system_settings_repo.get_float(db, _THRESHOLD_KEY, settings.power_threshold_w)
-            finally:
-                db.close()
+                power_w = await smartthings_client.get_power_w(device_id)
 
-            interval = _calc_interval(mode)
-
-            for machine_id, device_id in device_map.items():
                 try:
-                    power_w = await smartthings_client.get_power_w(device_id)
-
                     db = SessionLocal()
                     try:
                         machine_power_log_repo.create(db, machine_id, power_w)
                     finally:
                         db.close()
-
-                    is_running = power_w >= threshold
-                    prev = _last_states.get(machine_id)
-                    if prev != is_running:
-                        logger.info(
-                            f"machine {machine_id}: {'가동' if is_running else '정지'} "
-                            f"({power_w:.1f}W, 기준 {threshold}W)"
-                        )
-                        _last_states[machine_id] = is_running
-                        await _apply_state_change(machine_id, is_running)
-
                 except Exception as e:
-                    logger.warning(f"SmartThings polling error (machine {machine_id}): {e}")
+                    logger.warning(f"전력 로그 저장 실패 (machine {machine_id}): {e}")
 
-            now = time.time()
-            if now - _last_cleanup > 86400:
+                is_running = power_w >= threshold
+                prev = _last_states.get(machine_id)
+                if prev != is_running:
+                    logger.info(
+                        f"machine {machine_id}: {'가동' if is_running else '정지'} "
+                        f"({power_w:.1f}W, 기준 {threshold}W)"
+                    )
+                    _last_states[machine_id] = is_running
+                    try:
+                        await _apply_state_change(machine_id, is_running)
+                    except Exception as e:
+                        logger.warning(f"상태 변경 실패 (machine {machine_id}): {e}")
+
+            except Exception as e:
+                logger.warning(f"SmartThings polling error (machine {machine_id}): {e}")
+
+        now = time.time()
+        if now - _last_cleanup > 86400:
+            try:
                 db = SessionLocal()
                 try:
                     machine_power_log_repo.delete_old(db)
                 finally:
                     db.close()
-                _last_cleanup = now
-
-        except Exception as e:
-            logger.error(f"polling 루프 오류 (60초 후 재시도): {e}")
-            interval = 60.0
+            except Exception as e:
+                logger.warning(f"오래된 전력 로그 정리 실패: {e}")
+            _last_cleanup = now
 
         await asyncio.sleep(interval)
