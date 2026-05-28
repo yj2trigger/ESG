@@ -39,7 +39,18 @@ function PowerGraph({ machineId, token }: { machineId: number; token: string }) 
   }, [machineId, token])
 
   if (loading) return <div style={styles.graphMsg}>불러오는 중...</div>
-  if (data.length === 0) return <div style={styles.graphMsg}>데이터 없음 (polling 시작 후 수집됨)</div>
+
+  if (data.length === 0) {
+    return (
+      <div style={styles.graphContainer}>
+        <div style={styles.graphHeader}>
+          <span>현재 <strong>— W</strong></span>
+          <span style={{ color: '#888', fontSize: '0.82rem' }}>● 데이터 없음</span>
+        </div>
+        <div style={{ ...styles.graphMsg, padding: '2rem 0' }}>수집된 전력 데이터 없음</div>
+      </div>
+    )
+  }
 
   const chartData = data.map((d) => ({ time: formatTime(d.timestamp), power: d.power_w }))
   const latest = data[data.length - 1]?.power_w ?? 0
