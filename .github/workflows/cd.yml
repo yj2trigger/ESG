@@ -53,7 +53,7 @@ jobs:
   deploy-backend:
     name: Deploy Backend → Fly.io
     needs: [test-backend, test-frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,8 +61,8 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Set Fly.io secrets
-        if: ${{ secrets.SMARTTHINGS_PAT != '' }}
         run: flyctl secrets set SMARTTHINGS_PAT="$SMARTTHINGS_PAT" --app esg-laundry-checker
+        continue-on-error: true
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           SMARTTHINGS_PAT: ${{ secrets.SMARTTHINGS_PAT }}
@@ -75,7 +75,7 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend → Vercel
     needs: [test-backend, test-frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
