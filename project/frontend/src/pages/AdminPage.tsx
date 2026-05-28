@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { useAuthStore } from '../store/authStore'
-import { adminGetMachines, adminSetStatus, adminGetPowerHistory, AdminMachine, MachineStatus, PowerDataPoint } from '../api/admin'
+import { adminGetMachines, adminSetStatus, adminGetPowerHistory, adminGetSettings, AdminMachine, MachineStatus, PowerDataPoint } from '../api/admin'
 
 const STATUS_LABEL: Record<MachineStatus, string> = {
   available: '이용 가능',
@@ -20,7 +20,6 @@ const STATUS_COLOR: Record<MachineStatus, string> = {
 
 const GENDER_LABEL: Record<string, string> = { male: '남', female: '여' }
 const ALL_STATUSES: MachineStatus[] = ['available', 'in_use', 'broken']
-const THRESHOLD_W = 100
 const GRAPH_REFRESH_MS = 60_000
 
 function fmtHHMM(ts: number): string {
@@ -28,7 +27,17 @@ function fmtHHMM(ts: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-function PowerGraph({ machineId, token }: { machineId: number; token: string }) {
+function PowerGraph({
+  machineId,
+  token,
+  startThreshold,
+  stopThreshold,
+}: {
+  machineId: number
+  token: string
+  startThreshold: number
+  stopThreshold: number
+}) {
   const [data, setData] = useState<PowerDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [lastFetched, setLastFetched] = useState<Date | null>(null)
@@ -54,14 +63,11 @@ function PowerGraph({ machineId, token }: { machineId: number; token: string }) 
 
   if (loading) return <div style={styles.graphMsg}>불러오는 중...</div>
 
-  // 오늘 00:00 ~ 23:59 타임스탬프
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
   const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 0)
   const domainStart = todayStart.getTime()
   const domainEnd = todayEnd.getTime()
 
-  // 실제 데이터 포인트 (power = 숫자)
-  // 경계 null 포인트로 미래 구간 선 없이 X축만 표시
   const chartData: { ts: number; power: number | null }[] = [
     { ts: domainStart, power: null },
     ...data.map(d => ({ ts: new Date(d.timestamp).getTime(), power: d.power_w })),
@@ -69,9 +75,9 @@ function PowerGraph({ machineId, token }: { machineId: number; token: string }) 
   ]
 
   const latest = data.length > 0 ? data[data.length - 1].power_w : null
-  const isRunning = latest !== null && latest >= THRESHOLD_W
+  // 히스테리시스 관련: 그래프에서는 단순 시작 임계값(startThreshold) 기준으로 표시
+  const isRunning = latest !== null && latest >= startThreshold
 
-  // 3시간마다 tick
   const ticks: number[] = []
   for (let h = 0; h <= 23; h += 3) {
     const t = new Date(todayStart); t.setHours(h)
@@ -106,10 +112,16 @@ function PowerGraph({ machineId, token }: { machineId: number; token: string }) 
             formatter={(v: unknown) => v !== null ? [`${Number(v).toFixed(1)}W`, '전력'] : ['—', '전력']}
           />
           <ReferenceLine
-            y={THRESHOLD_W}
+            y={startThreshold}
             stroke="#e80"
             strokeDasharray="4 2"
-            label={{ value: '가동 기준', fontSize: 9, fill: '#e80', position: 'insideTopRight' }}
+            label={{ value: `가동 기준 ${startThreshold}W`, fontSize: 9, fill: '#e80', position: 'insideTopRight' }}
+          />
+          <ReferenceLine
+            y={stopThreshold}
+            stroke="#4a90d9"
+            strokeDasharray="4 2"
+            label={{ value: `정지 기준 ${stopThreshold}W`, fontSize: 9, fill: '#4a90d9', position: 'insideBottomRight' }}
           />
           <Line
             type="monotone"
@@ -133,6 +145,8 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null)
   const [updating, setUpdating] = useState<number | null>(null)
   const [expandedGraphs, setExpandedGraphs] = useState<Set<number>>(new Set())
+  const [startThreshold, setStartThreshold] = useState(20)
+  const [stopThreshold, setStopThreshold] = useState(5)
 
   useEffect(() => {
     if (!user || user.role !== 'admin') {
@@ -147,7 +161,13 @@ export default function AdminPage() {
     setLoading(true)
     setError(null)
     try {
-      setMachines(await adminGetMachines(user!.token))
+      const [ms, cfg] = await Promise.all([
+        adminGetMachines(user!.token),
+        adminGetSettings(user!.token),
+      ])
+      setMachines(ms)
+      setStartThreshold(cfg.power_threshold_w)
+      setStopThreshold(cfg.stop_threshold_w)
     } catch (e) {
       setError(e instanceof Error ? e.message : '오류 발생')
     } finally {
@@ -188,10 +208,13 @@ export default function AdminPage() {
     <div style={styles.container}>
       <header style={styles.header}>
         <span style={styles.title}>관리자 — 세탁기 상태</span>
-        <button style={styles.backBtn} onClick={() => navigate('/')}>← 대시보드</button>
+        <button style={styles.backBtn} onClick={() => navigate('/') }>← 대시보드</button>
       </header>
 
       <main style={styles.main}>
+        <div style={styles.thresholdInfo}>
+          가동 시작: <strong>{startThreshold}W</strong> · 정지 판단: <strong>{stopThreshold}W</strong>
+        </div>
         {Object.entries(byFloor).sort(([a], [b]) => Number(a) - Number(b)).map(([floor, ms]) => (
           <div key={floor} style={styles.floorSection}>
             <div style={styles.floorLabel}>{floor}층</div>
@@ -227,7 +250,12 @@ export default function AdminPage() {
                   </div>
                 </div>
                 {expandedGraphs.has(m.id) && (
-                  <PowerGraph machineId={m.id} token={user!.token} />
+                  <PowerGraph
+                    machineId={m.id}
+                    token={user!.token}
+                    startThreshold={startThreshold}
+                    stopThreshold={stopThreshold}
+                  />
                 )}
               </div>
             ))}
@@ -245,6 +273,7 @@ const styles: Record<string, React.CSSProperties> = {
   title: { fontWeight: 700, fontSize: '1.1rem' },
   backBtn: { padding: '0.35rem 0.85rem', fontSize: '0.85rem', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', background: '#fff' },
   main: { padding: '1rem', maxWidth: '640px', width: '100%', margin: '0 auto', boxSizing: 'border-box' },
+  thresholdInfo: { fontSize: '0.78rem', color: '#888', marginBottom: '0.75rem', padding: '0.3rem 0.6rem', background: '#f8f9fa', borderRadius: '4px' },
   floorSection: { marginBottom: '1.25rem' },
   floorLabel: { fontWeight: 700, fontSize: '0.9rem', color: '#555', marginBottom: '0.5rem', paddingBottom: '0.25rem', borderBottom: '1px solid #eee' },
   machineRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0', gap: '0.5rem', flexWrap: 'wrap' },
