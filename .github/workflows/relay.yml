@@ -1,6 +1,10 @@
 name: SmartThings Relay
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/relay.yml'
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
@@ -10,6 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
+      - name: 시작 대기 (10초)
+        run: sleep 10
+
       - name: pip 캐시
         uses: actions/cache@v4
         with:
@@ -32,14 +39,13 @@ jobs:
 
           if not DEVICE_MAP:
               print("SMARTTHINGS_DEVICE_XX 미설정", file=sys.stderr)
-              sys.exit(0)  # 에러여도 job 성공 유지
+              sys.exit(0)
 
           ESG_URL = os.getenv("ESG_BASE_URL", "https://esg-laundry-checker.fly.dev")
           IOT_KEY = os.environ["IOT_DEVICE_KEY"]
           START_W = float(os.getenv("START_THRESHOLD_W", "10"))
           STOP_W  = float(os.getenv("STOP_THRESHOLD_W", "5"))
           INTERVAL = 12
-          # 5분 30초 하드 데드라인 — timeout(8분) 전에 반드시 종료
           DEADLINE = time.time() + 5.5 * 60
 
           last_running = {}
@@ -72,10 +78,9 @@ jobs:
                   except Exception as e:
                       print(f"[poll {poll}] machine {machine_id} 오류: {e}", file=sys.stderr)
 
-              # 다음 poll 전 데드라인 확인 후 수면
               remaining = DEADLINE - time.time()
               if remaining <= INTERVAL:
-                  break  # 다음 주기 전에 데드라인 도달 예정 → 조기 종료
+                  break
               time.sleep(INTERVAL)
 
           print(f"완료: {poll}회 polling")
