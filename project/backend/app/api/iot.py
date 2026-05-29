@@ -4,13 +4,14 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core.database import SessionLocal, get_db
-from app.repositories import machine_repo, machine_status_log_repo
+from app.repositories import machine_repo, machine_power_log_repo, machine_status_log_repo
 
 router = APIRouter(prefix="/iot", tags=["iot"])
 
 
 class MachineSignal(BaseModel):
     is_running: bool
+    power_w: float | None = None  # 릴레이에서 전력값 전송 시 저장
 
 
 def _verify_device_key(x_device_key: str = Header(...)):
@@ -66,15 +67,17 @@ async def receive_machine_signal(
     if not machine:
         raise HTTPException(status_code=404, detail="머신을 찾을 수 없습니다")
 
+    # 전력값 함께 전송된 경우 로그 저장 (그래프 데이터 업데이트)
+    if body.power_w is not None:
+        machine_power_log_repo.create(db, machine_id, body.power_w)
+
     previous_status = machine.status
 
-    # 고장 상태는 IoT 신호로 자동 전환 불가 — 관리자 수동 복구만 가능
+    # 고장 상태는 IoT 신호로 자동 전환 불가
     if previous_status == "broken":
         return {"machine_id": machine_id, "status": "broken", "changed": False}
 
-    # soft_reserved 보호:
-    # - 전력 낙음(is_running=False): 예약자가 아직 세탁기를 켜지 않음 → 예약 유지 (만료 타이머에 위임)
-    # - 전력 높음(is_running=True): 예약자가 세탁기를 가동 → in_use로 전환 + 시작 알림
+    # soft_reserved 보호
     if previous_status == "soft_reserved":
         if not body.is_running:
             machine_status_log_repo.create(
@@ -113,7 +116,7 @@ async def receive_machine_signal(
     if new_status == "available":
         for g in genders:
             background_tasks.add_task(_handle_available, g)
-    else:  # in_use
+    else:
         if reserved_user_id:
             background_tasks.add_task(
                 _handle_machine_started, reserved_user_id, genders[0], machine_floor, machine_number
