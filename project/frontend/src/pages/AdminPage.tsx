@@ -20,6 +20,8 @@ const STATUS_COLOR: Record<MachineStatus, string> = {
 }
 
 const GENDER_LABEL: Record<string, string> = { male: '남', female: '여' }
+// 수동 전환 가능한 상태 (soft_reserved는 어드민 직접 전환 불필요)
+const MANUAL_STATUSES: MachineStatus[] = ['available', 'in_use', 'broken']
 const GRAPH_REFRESH_MS = 60_000
 const STATUS_POLL_MS = 10_000
 
@@ -134,7 +136,6 @@ export default function AdminPage() {
       navigate('/', { replace: true })
       return
     }
-    // 초기 로드
     ;(async () => {
       setLoading(true)
       try {
@@ -151,23 +152,19 @@ export default function AdminPage() {
         setLoading(false)
       }
     })()
-    // 10초마다 지속 폴링 (IoT polling이 없더라도 상태 반영)
     const t = setInterval(reloadMachines, STATUS_POLL_MS)
     return () => clearInterval(t)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // machines_updated WS 수신 시 즉시 갱신 (IoT 데이터 우선)
   useWebSocket(token, (msg: WsMessage) => {
     if (msg.type === 'machines_updated') reloadMachines()
   })
 
-  // 고장 표시/복구만 가능, 나머지 상태는 IoT가 자동 관리
-  const handleBrokenToggle = async (machine: AdminMachine) => {
-    const next: MachineStatus = machine.status === 'broken' ? 'available' : 'broken'
+  const handleStatusChange = async (machine: AdminMachine, status: MachineStatus) => {
     setUpdating(machine.id)
     try {
-      const updated = await adminSetStatus(user!.token, machine.id, next)
+      const updated = await adminSetStatus(user!.token, machine.id, status)
       setMachines((prev) => prev.map((m) => m.id === updated.id ? updated : m))
     } catch (e) {
       alert(e instanceof Error ? e.message : '변경 실패')
@@ -224,18 +221,16 @@ export default function AdminPage() {
                     <button style={styles.graphBtn} onClick={() => toggleGraph(m.id)}>
                       {expandedGraphs.has(m.id) ? '▲ 그래프' : '▼ 그래프'}
                     </button>
-                    {/* 고장 토글만 노출. 나머지 상태(available/in_use/soft_reserved)는 IoT 자동 관리 */}
-                    <button
-                      style={{
-                        ...styles.statusBtn,
-                        borderColor: m.status === 'broken' ? STATUS_COLOR.available : STATUS_COLOR.broken,
-                        color: m.status === 'broken' ? STATUS_COLOR.available : STATUS_COLOR.broken,
-                      }}
-                      onClick={() => handleBrokenToggle(m)}
-                      disabled={updating === m.id}
-                    >
-                      {m.status === 'broken' ? '복구' : '고장'}
-                    </button>
+                    {MANUAL_STATUSES.filter((s) => s !== m.status).map((s) => (
+                      <button
+                        key={s}
+                        style={{ ...styles.statusBtn, borderColor: STATUS_COLOR[s], color: STATUS_COLOR[s] }}
+                        onClick={() => handleStatusChange(m, s)}
+                        disabled={updating === m.id}
+                      >
+                        {STATUS_LABEL[s]}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 {expandedGraphs.has(m.id) && (
