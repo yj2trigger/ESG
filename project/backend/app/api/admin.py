@@ -7,17 +7,11 @@ from app.core.database import SessionLocal, get_db
 from app.core.dependencies import get_admin_user
 from app.core.ws_manager import manager
 from app.models.user import User
-from app.repositories import machine_power_log_repo, machine_repo, machine_status_log_repo, system_settings_repo
+from app.repositories import machine_power_log_repo, machine_repo, machine_status_log_repo
 from app.schemas.machine import MachineAdminItem, MachineStatusUpdate
 from app.services.machine_service import get_dashboard
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-_THRESHOLD_KEY = "power_threshold_w"
-
-
-class SettingsUpdate(BaseModel):
-    power_threshold_w: float
 
 
 async def _notify_gender(gender: str) -> None:
@@ -96,18 +90,8 @@ def get_power_history(
 
 
 @router.get("/settings")
-def get_settings(
-    _: User = Depends(get_admin_user),
-    db: Session = Depends(get_db),
-):
-    return {"power_threshold_w": system_settings_repo.get_float(db, _THRESHOLD_KEY, settings.power_threshold_w)}
-
-
-@router.patch("/settings")
-def update_settings(
-    body: SettingsUpdate,
-    _: User = Depends(get_admin_user),
-    db: Session = Depends(get_db),
-):
-    system_settings_repo.set_float(db, _THRESHOLD_KEY, body.power_threshold_w)
-    return {"power_threshold_w": body.power_threshold_w}
+def get_settings(_: User = Depends(get_admin_user)):
+    return {
+        "power_threshold_w": settings.power_threshold_w,
+        "stop_threshold_w": settings.stop_threshold_w,
+    }

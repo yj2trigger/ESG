@@ -40,6 +40,20 @@ async def _handle_in_use(gender: str) -> None:
         db.close()
 
 
+async def _handle_machine_started(user_id: int, gender: str, floor: int, machine_number: int) -> None:
+    """소프트 예약자에게 세탁기 작동 시작 알림 전송."""
+    from app.core.ws_manager import manager
+    await manager.send_to_user(
+        user_id,
+        gender,
+        {
+            "type": "machine_started",
+            "machine": {"floor": floor, "machine_number": machine_number},
+            "message": "세탁기 작동이 시작되었습니다",
+        },
+    )
+
+
 @router.post("/machines/{machine_id}/status")
 async def receive_machine_signal(
     machine_id: int,
@@ -53,20 +67,41 @@ async def receive_machine_signal(
         raise HTTPException(status_code=404, detail="머신을 찾을 수 없습니다")
 
     previous_status = machine.status
-    new_status = "in_use" if body.is_running else "available"
+
+    # 고장 상태는 IoT 신호로 자동 전환 불가 — 관리자 수동 복구만 가능
+    if previous_status == "broken":
+        return {"machine_id": machine_id, "status": "broken", "changed": False}
+
+    # soft_reserved 보호:
+    # - 전력 낙음(is_running=False): 예약자가 아직 세탁기를 켜지 않음 → 예약 유지 (만료 타이머에 위임)
+    # - 전력 높음(is_running=True): 예약자가 세탁기를 가동 → in_use로 전환 + 시작 알림
+    if previous_status == "soft_reserved":
+        if not body.is_running:
+            machine_status_log_repo.create(
+                db, machine, previous_status, "iot",
+                previous_status=previous_status, is_running=False, changed=False,
+            )
+            return {"machine_id": machine_id, "status": previous_status, "changed": False}
+        new_status = "in_use"
+    else:
+        new_status = "in_use" if body.is_running else "available"
+
     changed = previous_status != new_status
+
+    reserved_user_id = (
+        machine.reserved_by_user_id
+        if previous_status == "soft_reserved" and new_status == "in_use"
+        else None
+    )
+    machine_floor = machine.floor
+    machine_number = machine.machine_number
 
     if changed:
         machine_repo.set_status(db, machine, new_status)
 
     machine_status_log_repo.create(
-        db,
-        machine,
-        new_status,
-        "iot",
-        previous_status=previous_status,
-        is_running=body.is_running,
-        changed=changed,
+        db, machine, new_status, "iot",
+        previous_status=previous_status, is_running=body.is_running, changed=changed,
     )
 
     if not changed:
@@ -78,7 +113,11 @@ async def receive_machine_signal(
     if new_status == "available":
         for g in genders:
             background_tasks.add_task(_handle_available, g)
-    else:
+    else:  # in_use
+        if reserved_user_id:
+            background_tasks.add_task(
+                _handle_machine_started, reserved_user_id, genders[0], machine_floor, machine_number
+            )
         for g in genders:
             background_tasks.add_task(_handle_in_use, g)
 

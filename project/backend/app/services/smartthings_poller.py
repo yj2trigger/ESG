@@ -6,21 +6,17 @@ from datetime import datetime, timezone
 
 from app.config import settings
 from app.core.database import SessionLocal
-from app.repositories import machine_power_log_repo, machine_repo, system_settings_repo
+from app.repositories import machine_power_log_repo, machine_repo
 from app.services import smartthings_client
-from app.services.machine_service import get_current_mode
 
 logger = logging.getLogger(__name__)
 
 _last_states: dict[int, bool] = {}
+_last_polled: dict[int, float] = {}
 _last_cleanup: float = 0.0
-
-_THRESHOLD_KEY = "power_threshold_w"
 
 
 def _parse_device_map() -> dict[int, str]:
-    """SMARTTHINGS_DEVICE_01, SMARTTHINGS_DEVICE_02 형식 환경변수 자동 파싱.
-    숫자 부분 = ESG machine_id."""
     result: dict[int, str] = {}
     prefix = "SMARTTHINGS_DEVICE_"
     for key, value in os.environ.items():
@@ -33,57 +29,167 @@ def _parse_device_map() -> dict[int, str]:
     return result
 
 
-def _calc_interval(mode: str) -> float:
-    """ADR-007: 이용 가능 세탁기 적을수록 polling 빈도 높임."""
-    kst_hour = (datetime.now(timezone.utc).hour + 9) % 24
-    if kst_hour < 7 or kst_hour >= 22:
-        return 900.0
-    return {"A": 480.0, "B": 120.0, "C": 60.0}.get(mode, 120.0)
-
-
-def _get_mode_and_threshold() -> tuple[str, float]:
-    """DB에서 mode와 threshold 읽기. 실패 시 기본값 반환."""
+def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
+    """
+    우선 polling 대상 최대 3대.
+    - Mode A (available > 3):
+        1. 층별 유일 available 세탁기 우선
+        2. 3대 미만이면 나머지를 다른 available로 채움
+    - Mode B (available 1~3): available 세탁기 전체
+    - Mode C (available 0): soft_reserved 세탁기
+    """
     try:
+        from sqlalchemy import func
+        from app.models.machine import Machine
+
         db = SessionLocal()
         try:
-            mode = get_current_mode(db, "male")
+            now = datetime.now(timezone.utc)
+            available_count = (
+                db.query(func.count(Machine.id))
+                .filter(Machine.status == "available")
+                .scalar()
+            ) or 0
+
+            priority_ids: set[int] = set()
+
+            if available_count > 3:
+                # 1단계: 층별 유일 available 세탁기
+                scarce_floors = (
+                    db.query(Machine.floor)
+                    .filter(Machine.status == "available")
+                    .group_by(Machine.floor)
+                    .having(func.count(Machine.id) == 1)
+                    .all()
+                )
+                for (floor,) in scarce_floors:
+                    m = (
+                        db.query(Machine)
+                        .filter(Machine.floor == floor, Machine.status == "available")
+                        .first()
+                    )
+                    if m and m.id in device_map:
+                        priority_ids.add(m.id)
+                    if len(priority_ids) >= 3:
+                        break
+
+                # 2단계: 3대 미만이면 다른 available로 채움
+                if len(priority_ids) < 3:
+                    remaining = 3 - len(priority_ids)
+                    query = db.query(Machine).filter(Machine.status == "available")
+                    if priority_ids:
+                        query = query.filter(Machine.id.notin_(list(priority_ids)))
+                    for m in query.limit(remaining).all():
+                        if m.id in device_map:
+                            priority_ids.add(m.id)
+
+            elif available_count > 0:
+                # Mode B (1~3대): available 세탁기 전체
+                machines = (
+                    db.query(Machine)
+                    .filter(Machine.status == "available")
+                    .limit(3)
+                    .all()
+                )
+                priority_ids = {m.id for m in machines if m.id in device_map}
+            else:
+                # Mode C (0대): soft_reserved 세탁기
+                machines = (
+                    db.query(Machine)
+                    .filter(
+                        Machine.status == "soft_reserved",
+                        Machine.reserved_until > now,
+                    )
+                    .limit(3)
+                    .all()
+                )
+                priority_ids = {m.id for m in machines if m.id in device_map}
+
+            return priority_ids
         finally:
             db.close()
     except Exception as e:
-        logger.warning(f"mode 조회 실패, 기본값 A 사용: {e}")
-        mode = "A"
+        logger.warning(f"priority machine 조회 실패: {e}")
+        return set()
 
+
+async def _poll_single_machine(
+    machine_id: int,
+    device_id: str,
+    start_threshold: float,
+    stop_threshold: float,
+) -> None:
     try:
-        db = SessionLocal()
-        try:
-            threshold = system_settings_repo.get_float(db, _THRESHOLD_KEY, settings.power_threshold_w)
-        finally:
-            db.close()
-    except Exception as e:
-        logger.warning(f"threshold 조회 실패, 기본값 사용: {e}")
-        threshold = settings.power_threshold_w
+        power_w = await smartthings_client.get_power_w(device_id)
 
-    return mode, threshold
+        try:
+            db = SessionLocal()
+            try:
+                machine_power_log_repo.create(db, machine_id, power_w)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"전력 로그 저장 실패 (machine {machine_id}): {e}")
+
+        prev_running = _last_states.get(machine_id)
+        is_running = (
+            power_w >= stop_threshold if prev_running is True
+            else power_w >= start_threshold
+        )
+
+        if prev_running != is_running:
+            effective = stop_threshold if prev_running is True else start_threshold
+            logger.info(
+                f"machine {machine_id}: {'가동' if is_running else '정지'} "
+                f"({power_w:.1f}W, 기준 {effective}W)"
+            )
+
+        _last_states[machine_id] = is_running
+        try:
+            await _apply_state_change(machine_id, is_running)
+        except Exception as e:
+            logger.warning(f"상태 변경 실패 (machine {machine_id}): {type(e).__name__}: {e}")
+
+    except Exception as e:
+        logger.warning(f"SmartThings polling error (machine {machine_id}): {type(e).__name__}: {e}")
 
 
 async def _apply_state_change(machine_id: int, is_running: bool) -> None:
-    from app.api.iot import _handle_available, _handle_in_use
+    from app.api.iot import _handle_available, _handle_in_use, _handle_machine_started
 
     db = SessionLocal()
     try:
         machine = machine_repo.get_by_id(db, machine_id)
         if not machine:
             return
-        new_status = "in_use" if is_running else "available"
-        if machine.status == new_status:
+        previous_status = machine.status
+        if previous_status == "broken":
             return
+        if previous_status == "soft_reserved":
+            if not is_running:
+                return
+            new_status = "in_use"
+        else:
+            new_status = "in_use" if is_running else "available"
+        if previous_status == new_status:
+            return
+        logger.info(f"machine {machine_id}: DB {previous_status} → {new_status}")
+        reserved_user_id = (
+            machine.reserved_by_user_id
+            if previous_status == "soft_reserved" and new_status == "in_use"
+            else None
+        )
+        machine_floor = machine.floor
+        machine_number = machine.machine_number
         machine_repo.set_status(db, machine, new_status)
         gender = machine.gender_restriction
     finally:
         db.close()
 
     genders = ["male", "female"] if gender is None else [gender]
-    if is_running:
+    if new_status == "in_use":
+        if reserved_user_id:
+            await _handle_machine_started(reserved_user_id, genders[0], machine_floor, machine_number)
         for g in genders:
             await _handle_in_use(g)
     else:
@@ -103,42 +209,50 @@ async def poll_loop() -> None:
         logger.info("SMARTTHINGS_DEVICE_XX 미설정 — polling 비활성")
         return
 
-    logger.info(f"SmartThings polling 시작: {device_map}")
+    start_threshold = settings.power_threshold_w
+    stop_threshold = settings.stop_threshold_w
+    slow_sec = settings.base_poll_sec
+    fast_sec = slow_sec / max(settings.priority_poll_ratio, 1.0)
+
+    logger.info(
+        f"SmartThings polling 시작: {device_map} | "
+        f"start={start_threshold}W stop={stop_threshold}W | "
+        f"fast={fast_sec:.0f}s slow={slow_sec:.0f}s (ratio={settings.priority_poll_ratio}x)"
+    )
+
+    priority_ids: set[int] = set()
+    last_priority_refresh: float = 0.0
 
     while True:
-        mode, threshold = _get_mode_and_threshold()
-        interval = _calc_interval(mode)
+        now = time.time()
+
+        if now - last_priority_refresh >= fast_sec:
+            priority_ids = _get_priority_machine_ids(device_map)
+            last_priority_refresh = now
+            logger.debug(f"priority machines: {priority_ids}")
+
+            next_tick = int(fast_sec if priority_ids else slow_sec)
+            last_polled_at = int(max(_last_polled.values())) if _last_polled else int(now)
+            try:
+                from app.core.ws_manager import manager
+                for gender in ["male", "female"]:
+                    await manager.broadcast(gender, {
+                        "type": "poll_tick",
+                        "next_interval_sec": next_tick,
+                        "fast_interval_sec": int(fast_sec),
+                        "slow_interval_sec": int(slow_sec),
+                        "priority_count": len(priority_ids),
+                        "last_polled_at": last_polled_at,
+                    })
+            except Exception as e:
+                logger.warning(f"poll_tick 브로드쾐스트 실패: {e}")
 
         for machine_id, device_id in device_map.items():
-            try:
-                power_w = await smartthings_client.get_power_w(device_id)
+            interval = fast_sec if machine_id in priority_ids else slow_sec
+            if now - _last_polled.get(machine_id, 0) >= interval:
+                await _poll_single_machine(machine_id, device_id, start_threshold, stop_threshold)
+                _last_polled[machine_id] = time.time()
 
-                try:
-                    db = SessionLocal()
-                    try:
-                        machine_power_log_repo.create(db, machine_id, power_w)
-                    finally:
-                        db.close()
-                except Exception as e:
-                    logger.warning(f"전력 로그 저장 실패 (machine {machine_id}): {e}")
-
-                is_running = power_w >= threshold
-                prev = _last_states.get(machine_id)
-                if prev != is_running:
-                    logger.info(
-                        f"machine {machine_id}: {'가동' if is_running else '정지'} "
-                        f"({power_w:.1f}W, 기준 {threshold}W)"
-                    )
-                    _last_states[machine_id] = is_running
-                    try:
-                        await _apply_state_change(machine_id, is_running)
-                    except Exception as e:
-                        logger.warning(f"상태 변경 실패 (machine {machine_id}): {e}")
-
-            except Exception as e:
-                logger.warning(f"SmartThings polling error (machine {machine_id}): {e}")
-
-        now = time.time()
         if now - _last_cleanup > 86400:
             try:
                 db = SessionLocal()
@@ -150,4 +264,4 @@ async def poll_loop() -> None:
                 logger.warning(f"오래된 전력 로그 정리 실패: {e}")
             _last_cleanup = now
 
-        await asyncio.sleep(interval)
+        await asyncio.sleep(1)
