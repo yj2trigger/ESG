@@ -3,7 +3,7 @@
 
 모든 테스트는 이 conftest.py의 픽스처를 통해 DB에 접근합니다.
 실제 PostgreSQL 대신 SQLite in-memory DB를 사용하므로
-docker-compose 없이 로컬에서 바로 실행 가능합니다.
+docker-compose 없이 로컈에서 바로 실행 가능합니다.
 
 실행 방법 (project/backend/ 디렉토리에서):
     pip install -r requirements.txt -r requirements-test.txt
@@ -12,6 +12,7 @@ docker-compose 없이 로컬에서 바로 실행 가능합니다.
 
 import os
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
+os.environ["IOT_DEVICE_KEY"] = "test-iot-key"  # Settings() 생성 전 주입
 
 # Disable rate limiting before app modules are imported
 from app.core.limiter import limiter

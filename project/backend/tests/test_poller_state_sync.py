@@ -3,17 +3,16 @@ IoT 엔드포인트 상태 전환 테스트
 
 GitHub Actions 릴레이가 POST /iot/machines/{id}/status 호출 시
 상태 전환 로직이 올바르게 동작하는지 검증.
+IOT_DEVICE_KEY는 conftest.py에서 Settings() 생성 전에 주입됨.
 """
 
-from tests.conftest import register_and_login
 from app.models.machine import Machine
-import os
 
-os.environ["IOT_DEVICE_KEY"] = "test-key"
+IOT_KEY = "test-iot-key"  # conftest.py의 os.environ["IOT_DEVICE_KEY"]와 동일
 
 
 def _iot_headers():
-    return {"x-device-key": "test-key"}
+    return {"x-device-key": IOT_KEY}
 
 
 def test_iot_available_to_in_use(seeded_client, db):
@@ -89,10 +88,10 @@ def test_iot_power_log_saved(seeded_client, db):
 
 
 def test_iot_no_auth(seeded_client, db):
-    """x-device-key 없으면 422 또는 503."""
+    """x-device-key 없으면 422."""
     machine = db.query(Machine).filter(Machine.status == "available").first()
     resp = seeded_client.post(
         f"/iot/machines/{machine.id}/status",
         json={"is_running": True},
     )
-    assert resp.status_code in (422, 503)
+    assert resp.status_code == 422
