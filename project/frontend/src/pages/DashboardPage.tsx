@@ -24,11 +24,11 @@ interface ActiveReservation {
 }
 
 export interface PollTick {
-  at: number
   intervalSec: number
   fastIntervalSec: number
   slowIntervalSec: number
   priorityCount: number
+  lastPolledAt: number  // Unix 초
 }
 
 export default function DashboardPage() {
@@ -80,11 +80,11 @@ export default function DashboardPage() {
       setActiveReservation(null)
     } else if (msg.type === 'poll_tick' && msg.next_interval_sec) {
       setPollTick({
-        at: Date.now(),
         intervalSec: msg.next_interval_sec,
         fastIntervalSec: msg.fast_interval_sec ?? msg.next_interval_sec,
         slowIntervalSec: msg.slow_interval_sec ?? msg.next_interval_sec,
         priorityCount: msg.priority_count ?? 0,
+        lastPolledAt: msg.last_polled_at ?? Math.floor(Date.now() / 1000),
       })
     }
   })
@@ -218,9 +218,10 @@ function PollingInfoBar({ pollTick }: { pollTick: PollTick | null }) {
     )
   }
 
-  const { at, intervalSec, fastIntervalSec, slowIntervalSec, priorityCount } = pollTick
-  const elapsed = Math.floor((now - at) / 1000)
-  const remaining = Math.max(0, intervalSec - elapsed)
+  const { lastPolledAt, intervalSec, fastIntervalSec, slowIntervalSec, priorityCount } = pollTick
+  // 마지막 실제 polling 시각 기준으로 잔여 시간 계산
+  const elapsedSinceLastPoll = Math.floor(now / 1000 - lastPolledAt)
+  const remaining = Math.max(0, intervalSec - elapsedSinceLastPoll)
   const nextText = remaining <= 3 ? '잠시 후' : `${remaining}초 후`
 
   return (

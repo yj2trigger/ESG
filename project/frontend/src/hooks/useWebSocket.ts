@@ -16,6 +16,7 @@ export interface WsMessage {
   fast_interval_sec?: number
   slow_interval_sec?: number
   priority_count?: number
+  last_polled_at?: number  // Unix 초, 마지막 실제 polling 시각
 }
 
 export function useWebSocket(token: string | null, onMessage: (msg: WsMessage) => void) {

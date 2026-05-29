@@ -138,7 +138,6 @@ async def _apply_state_change(machine_id: int, is_running: bool) -> None:
         if not machine:
             return
         previous_status = machine.status
-        # 고장 상태는 IoT가 자동 전환 불가 — 관리자 수동 복구만 가능
         if previous_status == "broken":
             return
         if previous_status == "soft_reserved":
@@ -182,7 +181,7 @@ async def poll_loop() -> None:
 
     device_map = _parse_device_map()
     if not device_map:
-        logger.info("SMARTTHINGS_DEVICE_XX 미설쌓 — polling 비활성")
+        logger.info("SMARTTHINGS_DEVICE_XX 미설정 — polling 비활성")
         return
 
     start_threshold = settings.power_threshold_w
@@ -208,6 +207,8 @@ async def poll_loop() -> None:
             logger.debug(f"priority machines: {priority_ids}")
 
             next_tick = int(fast_sec if priority_ids else slow_sec)
+            # 마지막 실제 polling 시각 — 프론트엔드 카운트다운 동기화용
+            last_polled_at = int(max(_last_polled.values())) if _last_polled else int(now)
             try:
                 from app.core.ws_manager import manager
                 for gender in ["male", "female"]:
@@ -217,6 +218,7 @@ async def poll_loop() -> None:
                         "fast_interval_sec": int(fast_sec),
                         "slow_interval_sec": int(slow_sec),
                         "priority_count": len(priority_ids),
+                        "last_polled_at": last_polled_at,
                     })
             except Exception as e:
                 logger.warning(f"poll_tick 브로드쾐스트 실패: {e}")
