@@ -123,10 +123,10 @@ async def _poll_single_machine(
         try:
             await _apply_state_change(machine_id, is_running)
         except Exception as e:
-            logger.warning(f"상태 변경 실패 (machine {machine_id}): {e}")
+            logger.warning(f"상태 변경 실패 (machine {machine_id}): {type(e).__name__}: {e}")
 
     except Exception as e:
-        logger.warning(f"SmartThings polling error (machine {machine_id}): {e}")
+        logger.warning(f"SmartThings polling error (machine {machine_id}): {type(e).__name__}: {e}")
 
 
 async def _apply_state_change(machine_id: int, is_running: bool) -> None:
@@ -182,7 +182,7 @@ async def poll_loop() -> None:
 
     device_map = _parse_device_map()
     if not device_map:
-        logger.info("SMARTTHINGS_DEVICE_XX 미설정 — polling 비활성")
+        logger.info("SMARTTHINGS_DEVICE_XX 미설쌓 — polling 비활성")
         return
 
     start_threshold = settings.power_threshold_w
