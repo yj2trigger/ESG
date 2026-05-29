@@ -219,8 +219,7 @@ function PollingInfoBar({ pollTick }: { pollTick: PollTick | null }) {
 
   return (
     <div style={styles.pollingBar}>
-      <span>세탁기 정보 반영: {nextText} 갱신 예정 · 실제 변경 시에만 적용</span>
-      <span>IoT 감지 주기: {intervalSec}초 (GitHub Actions 릴레이)</span>
+      <span>세탁기 정보 반영: {nextText} 갱신 예정 · IoT {intervalSec}초 주기 · 실제 변경 시에만 적용</span>
     </div>
   )
 }
@@ -404,7 +403,7 @@ const styles: Record<string, React.CSSProperties> = {
   modeBanner: { border: '2px solid', borderRadius: '10px', padding: '1rem 1.25rem', marginBottom: '0.5rem' },
   modeLabel: { fontWeight: 800, fontSize: '1.1rem' },
   modeDesc: { margin: '0.4rem 0 0', fontSize: '0.9rem', color: '#444' },
-  pollingBar: { display: 'flex', flexDirection: 'column', gap: '0.15rem', padding: '0.4rem 0.75rem', marginBottom: '1rem', background: '#f8f9fa', borderRadius: '6px', fontSize: '0.72rem', color: '#999' },
+  pollingBar: { padding: '0.4rem 0.75rem', marginBottom: '1rem', background: '#f8f9fa', borderRadius: '6px', fontSize: '0.72rem', color: '#999' },
   floorGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.75rem' },
   floorCard: { border: '1px solid #ddd', borderRadius: '8px', padding: '1rem', textAlign: 'center' },
   floorNum: { fontWeight: 700, fontSize: '1rem' },
