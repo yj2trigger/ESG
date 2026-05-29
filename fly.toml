@@ -1,5 +1,5 @@
 app = 'esg-laundry-checker'
-primary_region = 'sin'
+primary_region = 'nrt'
 
 [build]
 
