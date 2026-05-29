@@ -68,8 +68,12 @@ async def receive_machine_signal(
 
     previous_status = machine.status
 
+    # 고장 상태는 IoT 신호로 자동 전환 불가 — 관리자 수동 복구만 가능
+    if previous_status == "broken":
+        return {"machine_id": machine_id, "status": "broken", "changed": False}
+
     # soft_reserved 보호:
-    # - 전력 낮음(is_running=False): 예약자가 아직 세탁기를 켜지 않음 → 예약 유지 (만료 타이머에 위임)
+    # - 전력 낙음(is_running=False): 예약자가 아직 세탁기를 켜지 않음 → 예약 유지 (만료 타이머에 위임)
     # - 전력 높음(is_running=True): 예약자가 세탁기를 가동 → in_use로 전환 + 시작 알림
     if previous_status == "soft_reserved":
         if not body.is_running:
@@ -84,7 +88,6 @@ async def receive_machine_signal(
 
     changed = previous_status != new_status
 
-    # in_use 전환 전에 예약자 정보 보존
     reserved_user_id = (
         machine.reserved_by_user_id
         if previous_status == "soft_reserved" and new_status == "in_use"

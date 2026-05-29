@@ -106,9 +106,6 @@ async def _poll_single_machine(
         except Exception as e:
             logger.warning(f"전력 로그 저장 실패 (machine {machine_id}): {e}")
 
-        # 히스테리시스: 이전 상태에 따라 다른 임계값 적용
-        # - 이전 가동(True): stop_threshold 미만이면 정지 판단
-        # - 이전 정지/미확인: start_threshold 이상이면 가동 판단
         prev_running = _last_states.get(machine_id)
         is_running = (
             power_w >= stop_threshold if prev_running is True
@@ -122,9 +119,6 @@ async def _poll_single_machine(
                 f"({power_w:.1f}W, 기준 {effective}W)"
             )
 
-        # _last_states 항상 갱신 + DB 항상 동기화
-        # (관리자 수동 변경 등으로 _last_states와 DB 간 불일치가 말생해도 교정)
-        # no-op 여부는 _apply_state_change 내부에서 previous_status == new_status 조건으로 처리
         _last_states[machine_id] = is_running
         try:
             await _apply_state_change(machine_id, is_running)
@@ -144,6 +138,9 @@ async def _apply_state_change(machine_id: int, is_running: bool) -> None:
         if not machine:
             return
         previous_status = machine.status
+        # 고장 상태는 IoT가 자동 전환 불가 — 관리자 수동 복구만 가능
+        if previous_status == "broken":
+            return
         if previous_status == "soft_reserved":
             if not is_running:
                 return
