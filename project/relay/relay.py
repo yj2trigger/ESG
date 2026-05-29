@@ -21,11 +21,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 환경변수 또는 .env
 SMARTTHINGS_PAT = os.environ["SMARTTHINGS_PAT"]
-DEVICE_MACHINE_MAP: dict[str, int] = {}  # {smartthings_device_id: esg_machine_id}
+DEVICE_MACHINE_MAP: dict[str, int] = {}
 
-# SMARTTHINGS_DEVICE_1=uuid, SMARTTHINGS_DEVICE_2=uuid 형식
 for key, value in os.environ.items():
     if key.startswith("SMARTTHINGS_DEVICE_") and value.strip():
         machine_id = int(key[len("SMARTTHINGS_DEVICE_"):])
@@ -48,7 +46,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_last_running: dict[str, bool] = {}  # {device_id: is_running}
+_last_running: dict[str, bool] = {}
 
 
 def get_power_w(device_id: str) -> float:
@@ -61,10 +59,10 @@ def get_power_w(device_id: str) -> float:
     return float(r.json()["components"]["main"]["powerMeter"]["power"]["value"])
 
 
-def send_status(machine_id: int, is_running: bool) -> None:
+def send_status(machine_id: int, is_running: bool, power_w: float) -> None:
     r = httpx.post(
         f"{ESG_BASE_URL}/iot/machines/{machine_id}/status",
-        json={"is_running": is_running},
+        json={"is_running": is_running, "power_w": power_w},
         headers={"x-device-key": IOT_DEVICE_KEY},
         timeout=15.0,
     )
@@ -81,7 +79,6 @@ def main() -> None:
             try:
                 power_w = get_power_w(device_id)
 
-                # 히스테리시스: 이전 상태에 따라 다른 임계값 적용
                 prev = _last_running.get(device_id)
                 is_running = (
                     power_w >= STOP_THRESHOLD_W if prev is True
@@ -96,12 +93,13 @@ def main() -> None:
                         f"machine {machine_id}: {'가동' if is_running else '정지'} "
                         f"({power_w:.1f}W)"
                     )
+                else:
+                    logger.info(f"machine {machine_id}: {power_w:.1f}W")
 
-                send_status(machine_id, is_running)
-                logger.debug(f"machine {machine_id}: {power_w:.1f}W → 전송 OK")
+                send_status(machine_id, is_running, power_w)
 
             except httpx.HTTPStatusError as e:
-                logger.error(f"machine {machine_id} HTTP 오류: {e.response.status_code} {e}")
+                logger.error(f"machine {machine_id} HTTP 오류: {e.response.status_code}")
             except Exception as e:
                 logger.error(f"machine {machine_id} 오류: {type(e).__name__}: {e}")
 
