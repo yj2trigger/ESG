@@ -32,9 +32,11 @@ def _parse_device_map() -> dict[int, str]:
 def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
     """
     우선 polling 대상 최대 3대.
-    - Mode A (available > 3): 층별 이용 가능 1대만 남은 층의 세탁기
-    - Mode B (available 1~3): available 세탁기 자체 (사용 시작 빠른 감지)
-    - Mode C (available 0): soft_reserved 세탁기 (가동 시작 감지)
+    - Mode A (available > 3):
+        1. 층별 유일 available 세탁기 우선
+        2. 3대 미만이면 나머지를 다른 available로 채움
+    - Mode B (available 1~3): available 세탁기 전체
+    - Mode C (available 0): soft_reserved 세탁기
     """
     try:
         from sqlalchemy import func
@@ -52,7 +54,7 @@ def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
             priority_ids: set[int] = set()
 
             if available_count > 3:
-                # Mode A: 층별 1대만 남은 세탁기
+                # 1단계: 층별 유일 available 세탁기
                 scarce_floors = (
                     db.query(Machine.floor)
                     .filter(Machine.status == "available")
@@ -70,8 +72,19 @@ def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
                         priority_ids.add(m.id)
                     if len(priority_ids) >= 3:
                         break
+
+                # 2단계: 3대 미만이면 다른 available로 채움
+                if len(priority_ids) < 3:
+                    remaining = 3 - len(priority_ids)
+                    query = db.query(Machine).filter(Machine.status == "available")
+                    if priority_ids:
+                        query = query.filter(Machine.id.notin_(list(priority_ids)))
+                    for m in query.limit(remaining).all():
+                        if m.id in device_map:
+                            priority_ids.add(m.id)
+
             elif available_count > 0:
-                # Mode B (1~3대): available 세탁기 자체 우선 감지
+                # Mode B (1~3대): available 세탁기 전체
                 machines = (
                     db.query(Machine)
                     .filter(Machine.status == "available")
@@ -80,7 +93,7 @@ def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
                 )
                 priority_ids = {m.id for m in machines if m.id in device_map}
             else:
-                # Mode C (0대): soft_reserved 세탁기 가동 시작 감지
+                # Mode C (0대): soft_reserved 세탁기
                 machines = (
                     db.query(Machine)
                     .filter(
