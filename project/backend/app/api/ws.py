@@ -5,6 +5,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from jose import JWTError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.database import SessionLocal
 from app.core.security import decode_token
 from app.core.ws_manager import manager
@@ -42,6 +43,17 @@ async def websocket_endpoint(ws: WebSocket, token: str):
     finally:
         db.close()
 
+    # 연결 즉시 poll_tick 전송 → 프론트엔드 '동기화 대기 중' 상태 제거
+    _slow = settings.base_poll_sec
+    _fast = _slow / max(settings.priority_poll_ratio, 1.0)
+    await ws.send_json({
+        "type": "poll_tick",
+        "next_interval_sec": int(_fast),
+        "fast_interval_sec": int(_fast),
+        "slow_interval_sec": int(_slow),
+        "priority_count": 0,
+    })
+
     try:
         while True:
             try:
@@ -63,9 +75,6 @@ async def websocket_endpoint(ws: WebSocket, token: str):
 
                 if released or expired_user_ids:
                     await _notify_queue_and_broadcast(db, gender)
-                else:
-                    # Still broadcast position updates on every tick in case queue changed
-                    pass
             finally:
                 db.close()
 
@@ -81,7 +90,6 @@ async def _notify_queue_and_broadcast(db: Session, gender: str) -> None:
     if waiter:
         machine = machine_repo.get_first_available(db, gender)
         if machine:
-            # 5-min hold so no one else grabs the machine during acceptance window
             machine_repo.soft_reserve(db, machine, waiter.user_id, duration_minutes=5)
             entry = queue_repo.set_notified(db, waiter, accept_minutes=5)
             await manager.send_to_user(
