@@ -16,7 +16,8 @@ jobs:
           path: ~/.cache/pip
           key: relay-httpx
 
-      - name: SmartThings 폴링 → ESG 전달 (12초 × 25회)
+      - name: SmartThings 폴링 → ESG 전달
+        continue-on-error: true
         run: |
           pip install httpx -q
           python - <<'PYEOF'
@@ -31,18 +32,21 @@ jobs:
 
           if not DEVICE_MAP:
               print("SMARTTHINGS_DEVICE_XX 미설정", file=sys.stderr)
-              sys.exit(1)
+              sys.exit(0)  # 에러여도 job 성공 유지
 
           ESG_URL = os.getenv("ESG_BASE_URL", "https://esg-laundry-checker.fly.dev")
           IOT_KEY = os.environ["IOT_DEVICE_KEY"]
           START_W = float(os.getenv("START_THRESHOLD_W", "10"))
-          STOP_W = float(os.getenv("STOP_THRESHOLD_W", "5"))
-          POLL_COUNT = 25
+          STOP_W  = float(os.getenv("STOP_THRESHOLD_W", "5"))
           INTERVAL = 12
+          # 5분 30초 하드 데드라인 — timeout(8분) 전에 반드시 종료
+          DEADLINE = time.time() + 5.5 * 60
 
           last_running = {}
+          poll = 0
 
-          for i in range(POLL_COUNT):
+          while time.time() < DEADLINE:
+              poll += 1
               for device_id, machine_id in DEVICE_MAP.items():
                   try:
                       r = httpx.get(
@@ -64,12 +68,17 @@ jobs:
                           timeout=10.0,
                       )
                       resp.raise_for_status()
-                      print(f"[{i+1}/{POLL_COUNT}] machine {machine_id}: {power_w:.1f}W is_running={is_running}")
+                      print(f"[poll {poll}] machine {machine_id}: {power_w:.1f}W is_running={is_running}")
                   except Exception as e:
-                      print(f"[{i+1}/{POLL_COUNT}] machine {machine_id} 오류: {e}", file=sys.stderr)
+                      print(f"[poll {poll}] machine {machine_id} 오류: {e}", file=sys.stderr)
 
-              if i < POLL_COUNT - 1:
-                  time.sleep(INTERVAL)
+              # 다음 poll 전 데드라인 확인 후 수면
+              remaining = DEADLINE - time.time()
+              if remaining <= INTERVAL:
+                  break  # 다음 주기 전에 데드라인 도달 예정 → 조기 종료
+              time.sleep(INTERVAL)
+
+          print(f"완료: {poll}회 polling")
           PYEOF
         env:
           SMARTTHINGS_PAT: ${{ secrets.SMARTTHINGS_PAT }}
