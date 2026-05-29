@@ -4,7 +4,8 @@ primary_region = 'sin'
 [build]
 
 [env]
-  POWER_THRESHOLD_W = "100"
+  POWER_THRESHOLD_W = "10"
+  STOP_THRESHOLD_W = "5"
 
 [http_service]
   internal_port = 8000
