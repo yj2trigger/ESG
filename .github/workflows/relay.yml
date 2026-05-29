@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - name: SmartThings 폴링 → ESG 전달 (60초 × 5회)
+      - name: SmartThings 폴링 → ESG 전달 (12초 × 25회)
         run: |
           pip install httpx -q
           python - <<'PYEOF'
@@ -31,10 +31,10 @@ jobs:
           IOT_KEY = os.environ["IOT_DEVICE_KEY"]
           START_W = float(os.getenv("START_THRESHOLD_W", "10"))
           STOP_W = float(os.getenv("STOP_THRESHOLD_W", "5"))
-          POLL_COUNT = 5
-          INTERVAL = 60
+          POLL_COUNT = 25   # 5실행 × 25회 = 분당 5회
+          INTERVAL = 12     # 초 (5실행 내 5분 커버)
 
-          last_running = {}  # 세션 내 히스테리시스
+          last_running = {}
 
           for i in range(POLL_COUNT):
               for device_id, machine_id in DEVICE_MAP.items():
@@ -42,7 +42,7 @@ jobs:
                       r = httpx.get(
                           f"https://api.smartthings.com/v1/devices/{device_id}/status",
                           headers={"Authorization": f"Bearer {PAT}"},
-                          timeout=30.0,
+                          timeout=10.0,
                       )
                       r.raise_for_status()
                       power_w = float(r.json()["components"]["main"]["powerMeter"]["power"]["value"])
@@ -55,7 +55,7 @@ jobs:
                           f"{ESG_URL}/iot/machines/{machine_id}/status",
                           json={"is_running": is_running, "power_w": power_w},
                           headers={"x-device-key": IOT_KEY},
-                          timeout=15.0,
+                          timeout=10.0,
                       )
                       resp.raise_for_status()
                       print(f"[{i+1}/{POLL_COUNT}] machine {machine_id}: {power_w:.1f}W is_running={is_running}")
