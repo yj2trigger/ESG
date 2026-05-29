@@ -25,10 +25,7 @@ interface ActiveReservation {
 
 export interface PollTick {
   intervalSec: number
-  fastIntervalSec: number
-  slowIntervalSec: number
-  priorityCount: number
-  lastPolledAt: number  // Unix 초
+  lastPolledAt: number
 }
 
 export default function DashboardPage() {
@@ -81,9 +78,6 @@ export default function DashboardPage() {
     } else if (msg.type === 'poll_tick' && msg.next_interval_sec) {
       setPollTick({
         intervalSec: msg.next_interval_sec,
-        fastIntervalSec: msg.fast_interval_sec ?? msg.next_interval_sec,
-        slowIntervalSec: msg.slow_interval_sec ?? msg.next_interval_sec,
-        priorityCount: msg.priority_count ?? 0,
         lastPolledAt: msg.last_polled_at ?? Math.floor(Date.now() / 1000),
       })
     }
@@ -218,16 +212,15 @@ function PollingInfoBar({ pollTick }: { pollTick: PollTick | null }) {
     )
   }
 
-  const { lastPolledAt, intervalSec, fastIntervalSec, slowIntervalSec, priorityCount } = pollTick
-  // 마지막 실제 polling 시각 기준으로 잔여 시간 계산
-  const elapsedSinceLastPoll = Math.floor(now / 1000 - lastPolledAt)
-  const remaining = Math.max(0, intervalSec - elapsedSinceLastPoll)
-  const nextText = remaining <= 3 ? '잠시 후' : `${remaining}초 후`
+  const { lastPolledAt, intervalSec } = pollTick
+  const elapsed = Math.floor(now / 1000 - lastPolledAt)
+  const remaining = Math.max(0, intervalSec - elapsed)
+  const nextText = remaining <= 2 ? '잠시 후' : `${remaining}초 후`
 
   return (
     <div style={styles.pollingBar}>
       <span>세탁기 정보 반영: {nextText} 갱신 예정 · 실제 변경 시에만 적용</span>
-      <span>IoT 감지 주기: 우선 기기({priorityCount}대) {fastIntervalSec}초 · 일반 기기 {slowIntervalSec}초</span>
+      <span>IoT 감지 주기: {intervalSec}초 (GitHub Actions 릴레이)</span>
     </div>
   )
 }
@@ -396,13 +389,9 @@ function ModeCView({ token, username, onDone, livePosition, liveTotal, queueInfo
   )
 }
 
-// ── helpers ──────────────────────────────────────────────────
-
 function Screen({ children }: { children: React.ReactNode }) {
   return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>{children}</div>
 }
-
-// ── styles ───────────────────────────────────────────────────
 
 const styles: Record<string, React.CSSProperties> = {
   container: { display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'sans-serif' },
