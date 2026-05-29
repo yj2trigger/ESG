@@ -32,8 +32,9 @@ def _parse_device_map() -> dict[int, str]:
 def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
     """
     우선 polling 대상 최대 3대.
-    - 이용 가능 > 3대 (Mode A): 층별 이용 가능 1대만 남은 층의 세탁기
-    - 이용 가능 ≤ 3대 (Mode B/C): soft_reserved 세탁기
+    - Mode A (available > 3): 층별 이용 가능 1대만 남은 층의 세탁기
+    - Mode B (available 1~3): available 세탁기 자체 (사용 시작 빠른 감지)
+    - Mode C (available 0): soft_reserved 세탁기 (가동 시작 감지)
     """
     try:
         from sqlalchemy import func
@@ -51,6 +52,7 @@ def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
             priority_ids: set[int] = set()
 
             if available_count > 3:
+                # Mode A: 층별 1대만 남은 세탁기
                 scarce_floors = (
                     db.query(Machine.floor)
                     .filter(Machine.status == "available")
@@ -68,7 +70,17 @@ def _get_priority_machine_ids(device_map: dict[int, str]) -> set[int]:
                         priority_ids.add(m.id)
                     if len(priority_ids) >= 3:
                         break
+            elif available_count > 0:
+                # Mode B (1~3대): available 세탁기 자체 우선 감지
+                machines = (
+                    db.query(Machine)
+                    .filter(Machine.status == "available")
+                    .limit(3)
+                    .all()
+                )
+                priority_ids = {m.id for m in machines if m.id in device_map}
             else:
+                # Mode C (0대): soft_reserved 세탁기 가동 시작 감지
                 machines = (
                     db.query(Machine)
                     .filter(
@@ -207,7 +219,6 @@ async def poll_loop() -> None:
             logger.debug(f"priority machines: {priority_ids}")
 
             next_tick = int(fast_sec if priority_ids else slow_sec)
-            # 마지막 실제 polling 시각 — 프론트엔드 카운트다운 동기화용
             last_polled_at = int(max(_last_polled.values())) if _last_polled else int(now)
             try:
                 from app.core.ws_manager import manager
