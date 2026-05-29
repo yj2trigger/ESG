@@ -8,8 +8,14 @@ on:
 jobs:
   relay:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 8
     steps:
+      - name: pip 캐시
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: relay-httpx
+
       - name: SmartThings 폴링 → ESG 전달 (12초 × 25회)
         run: |
           pip install httpx -q
@@ -31,8 +37,8 @@ jobs:
           IOT_KEY = os.environ["IOT_DEVICE_KEY"]
           START_W = float(os.getenv("START_THRESHOLD_W", "10"))
           STOP_W = float(os.getenv("STOP_THRESHOLD_W", "5"))
-          POLL_COUNT = 25   # 5실행 × 25회 = 분당 5회
-          INTERVAL = 12     # 초 (5실행 내 5분 커버)
+          POLL_COUNT = 25
+          INTERVAL = 12
 
           last_running = {}
 
