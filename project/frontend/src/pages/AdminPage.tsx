@@ -20,7 +20,6 @@ const STATUS_COLOR: Record<MachineStatus, string> = {
 }
 
 const GENDER_LABEL: Record<string, string> = { male: '남', female: '여' }
-// 수동 전환 가능한 상태 (soft_reserved는 어드민 직접 전환 불필요)
 const MANUAL_STATUSES: MachineStatus[] = ['available', 'in_use', 'broken']
 const GRAPH_REFRESH_MS = 60_000
 const STATUS_POLL_MS = 10_000
@@ -60,10 +59,9 @@ function PowerGraph({
 
   if (loading) return <div style={styles.graphMsg}>불러오는 중...</div>
 
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
-  const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 0)
-  const domainStart = todayStart.getTime()
-  const domainEnd = todayEnd.getTime()
+  // 최근 24시간 슬라이딩 윈도우 (자정 넘어가도 데이터 공백 없음)
+  const domainEnd = Date.now()
+  const domainStart = domainEnd - 24 * 60 * 60 * 1000
 
   const chartData: { ts: number; power: number | null }[] = [
     { ts: domainStart, power: null },
@@ -74,10 +72,10 @@ function PowerGraph({
   const latest = data.length > 0 ? data[data.length - 1].power_w : null
   const isRunning = latest !== null && latest >= startThreshold
 
+  // 3시간마다 tick
   const ticks: number[] = []
-  for (let h = 0; h <= 23; h += 3) {
-    const t = new Date(todayStart); t.setHours(h)
-    ticks.push(t.getTime())
+  for (let i = 0; i <= 8; i++) {
+    ticks.push(domainStart + i * 3 * 60 * 60 * 1000)
   }
 
   return (
