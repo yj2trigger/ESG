@@ -48,7 +48,7 @@ jobs:
           IOT_KEY = os.environ["IOT_DEVICE_KEY"]
           START_W = float(os.getenv("START_THRESHOLD_W", "10"))
           STOP_W  = float(os.getenv("STOP_THRESHOLD_W", "5"))
-          INTERVAL = 12
+          INTERVAL = .inf
           DEADLINE = time.time() + 5.5 * 60
 
           last_running = {}
