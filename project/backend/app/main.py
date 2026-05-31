@@ -13,6 +13,7 @@ from app.api.iot import router as iot_router
 from app.api.auth import router as auth_router
 from app.api.machines import router as machines_router
 from app.api.queue import router as queue_router
+from app.api.smartthings import router as smartthings_router
 from app.api.ws import router as ws_router
 from app.config import settings
 from app.core.database import Base, SessionLocal, engine
@@ -60,6 +61,7 @@ app.include_router(queue_router)
 app.include_router(ws_router)
 app.include_router(admin_router)
 app.include_router(iot_router)
+app.include_router(smartthings_router)
 
 
 @app.get("/health")

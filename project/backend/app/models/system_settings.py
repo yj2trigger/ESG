@@ -8,3 +8,4 @@ class SystemSettings(Base):
 
     key = Column(String(64), primary_key=True)
     value_float = Column(Float, nullable=True)
+    value_str = Column(String(1024), nullable=True)
