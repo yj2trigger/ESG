@@ -1,3 +1,5 @@
+import time as _time
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -11,7 +13,7 @@ router = APIRouter(prefix="/iot", tags=["iot"])
 
 class MachineSignal(BaseModel):
     is_running: bool
-    power_w: float | None = None  # 릴레이에서 전력값 전송 시 저장
+    power_w: float | None = None
 
 
 def _verify_device_key(x_device_key: str = Header(...)):
@@ -42,7 +44,6 @@ async def _handle_in_use(gender: str) -> None:
 
 
 async def _handle_machine_started(user_id: int, gender: str, floor: int, machine_number: int) -> None:
-    """소프트 예약자에게 세탁기 작동 시작 알림 전송."""
     from app.core.ws_manager import manager
     await manager.send_to_user(
         user_id,
@@ -53,6 +54,22 @@ async def _handle_machine_started(user_id: int, gender: str, floor: int, machine
             "message": "세탁기 작동이 시작되었습니다",
         },
     )
+
+
+async def _broadcast_poll_tick(genders: list[str]) -> None:
+    """릴레이가 호출할 때마다 poll_tick 전송 — 사용자 카운트다운 동기화."""
+    from app.core.ws_manager import manager
+    interval = settings.relay_poll_sec
+    now = int(_time.time())
+    for gender in genders:
+        await manager.broadcast(gender, {
+            "type": "poll_tick",
+            "next_interval_sec": interval,
+            "fast_interval_sec": interval,
+            "slow_interval_sec": interval,
+            "priority_count": 0,
+            "last_polled_at": now,
+        })
 
 
 @router.post("/machines/{machine_id}/status")
@@ -67,17 +84,19 @@ async def receive_machine_signal(
     if not machine:
         raise HTTPException(status_code=404, detail="머신을 찾을 수 없습니다")
 
-    # 전력값 함께 전송된 경우 로그 저장 (그래프 데이터 업데이트)
     if body.power_w is not None:
         machine_power_log_repo.create(db, machine_id, body.power_w)
 
     previous_status = machine.status
+    gender = machine.gender_restriction
+    genders = ["male", "female"] if gender is None else [gender]
 
-    # 고장 상태는 IoT 신호로 자동 전환 불가
+    # 수신 즉시 poll_tick 브로드쾐스트 — 사용자 카운트다운 리셋
+    background_tasks.add_task(_broadcast_poll_tick, genders)
+
     if previous_status == "broken":
         return {"machine_id": machine_id, "status": "broken", "changed": False}
 
-    # soft_reserved 보호
     if previous_status == "soft_reserved":
         if not body.is_running:
             machine_status_log_repo.create(
@@ -109,9 +128,6 @@ async def receive_machine_signal(
 
     if not changed:
         return {"machine_id": machine_id, "status": new_status, "changed": False}
-
-    gender = machine.gender_restriction
-    genders = ["male", "female"] if gender is None else [gender]
 
     if new_status == "available":
         for g in genders:

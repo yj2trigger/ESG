@@ -34,8 +34,15 @@ export function adminSetStatus(token: string, machineId: number, status: Machine
   })
 }
 
-export function adminGetPowerHistory(token: string, machineId: number, hours = 24): Promise<PowerDataPoint[]> {
-  return authFetch(`/admin/machines/${machineId}/power-history?hours=${hours}`, token)
+export function adminGetPowerHistory(
+  token: string,
+  machineId: number,
+  query: { hours?: number; date?: string } = { hours: 24 }
+): Promise<PowerDataPoint[]> {
+  const params = query.date
+    ? `date=${encodeURIComponent(query.date)}`
+    : `hours=${query.hours ?? 24}`
+  return authFetch(`/admin/machines/${machineId}/power-history?${params}`, token)
 }
 
 export function adminGetSettings(token: string): Promise<AdminSettings> {

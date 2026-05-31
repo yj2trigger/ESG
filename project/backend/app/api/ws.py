@@ -45,18 +45,14 @@ async def websocket_endpoint(ws: WebSocket, token: str):
         db.close()
 
     # 연결 즉시 poll_tick 전송 — '동기화 대기 중' 상태 제거
-    # _last_polled에서 실제 마지막 polling 시각 참조 → 정확한 잔여 시간 표시 가능
-    from app.services.smartthings_poller import _last_polled
-    _slow = settings.base_poll_sec
-    _fast = _slow / max(settings.priority_poll_ratio, 1.0)
-    _last_polled_at = int(max(_last_polled.values())) if _last_polled else int(time.time())
+    _interval = settings.relay_poll_sec
     await ws.send_json({
         "type": "poll_tick",
-        "next_interval_sec": int(_fast),
-        "fast_interval_sec": int(_fast),
-        "slow_interval_sec": int(_slow),
+        "next_interval_sec": _interval,
+        "fast_interval_sec": _interval,
+        "slow_interval_sec": _interval,
         "priority_count": 0,
-        "last_polled_at": _last_polled_at,
+        "last_polled_at": int(time.time()),
     })
 
     try:

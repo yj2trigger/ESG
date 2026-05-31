@@ -1,0 +1,97 @@
+name: SmartThings Relay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/relay.yml'
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: pip 캐시
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: relay-httpx
+      - name: Check secret
+        run: |
+          echo "PAT length: ${#SMARTTHINGS_PAT}"
+          echo "PAT prefix: ${SMARTTHINGS_PAT:0:8}"
+        env:
+          SMARTTHINGS_PAT: ${{ secrets.SMARTTHINGS_PAT }}
+
+      - name: SmartThings 폴링 → ESG 전달
+        continue-on-error: true
+        run: |
+          pip install httpx -q
+          python - <<'PYEOF'
+          import httpx, os, sys, time
+
+          PAT = os.environ["SMARTTHINGS_PAT"]
+          DEVICE_MAP = {}
+          for key, val in os.environ.items():
+              if key.startswith("SMARTTHINGS_DEVICE_") and val.strip():
+                  machine_id = int(key[len("SMARTTHINGS_DEVICE_"):])
+                  DEVICE_MAP[val.strip()] = machine_id
+
+          if not DEVICE_MAP:
+              print("SMARTTHINGS_DEVICE_XX 미설정", file=sys.stderr)
+              sys.exit(0)
+
+          ESG_URL = os.getenv("ESG_BASE_URL", "https://esg-laundry-checker.fly.dev")
+          IOT_KEY = os.environ["IOT_DEVICE_KEY"]
+          START_W = float(os.getenv("START_THRESHOLD_W", "10"))
+          STOP_W  = float(os.getenv("STOP_THRESHOLD_W", "5"))
+          INTERVAL = 60
+          DEADLINE = time.time() + 5.5 * 60
+
+          last_running = {}
+          poll = 0
+
+          while time.time() < DEADLINE:
+              poll += 1
+              for device_id, machine_id in DEVICE_MAP.items():
+                  try:
+                      r = httpx.get(
+                          f"https://api.smartthings.com/v1/devices/{device_id}/status",
+                          headers={"Authorization": f"Bearer {PAT}"},
+                          timeout=10.0,
+                      )
+                      r.raise_for_status()
+                      power_w = float(r.json()["components"]["main"]["powerMeter"]["power"]["value"])
+
+                      prev = last_running.get(device_id)
+                      is_running = power_w >= STOP_W if prev is True else power_w >= START_W
+                      last_running[device_id] = is_running
+
+                      resp = httpx.post(
+                          f"{ESG_URL}/iot/machines/{machine_id}/status",
+                          json={"is_running": is_running, "power_w": power_w},
+                          headers={"x-device-key": IOT_KEY},
+                          timeout=15.0,
+                      )
+                      resp.raise_for_status()
+                      print(f"[poll {poll}] machine {machine_id}: {power_w:.1f}W is_running={is_running}")
+                  except Exception as e:
+                      print(f"[poll {poll}] machine {machine_id} 오류: {e}", file=sys.stderr)
+
+              remaining = DEADLINE - time.time()
+              if remaining <= INTERVAL:
+                  break
+              time.sleep(INTERVAL)
+
+          print(f"완료: {poll}회 polling")
+          PYEOF
+        env:
+          SMARTTHINGS_PAT: ${{ secrets.SMARTTHINGS_PAT }}
+          SMARTTHINGS_DEVICE_01: ${{ secrets.SMARTTHINGS_DEVICE_01 }}
+          IOT_DEVICE_KEY: ${{ secrets.IOT_DEVICE_KEY }}
+          ESG_BASE_URL: https://esg-laundry-checker.fly.dev
+          START_THRESHOLD_W: "10"
+          STOP_THRESHOLD_W: "5"

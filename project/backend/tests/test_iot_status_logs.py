@@ -1,17 +1,19 @@
-from app.config import settings
 from app.models.machine import Machine, MachineStatusLog
 from app.models.user import User
 from tests.conftest import register_and_login
 
+# conftest: os.environ["IOT_DEVICE_KEY"]="test-iot-key" 설정, autouse reset_settings로 격리
+# settings 직접 변경 금지
+IOT_KEY = "test-iot-key"
+
 
 def test_iot_signal_stores_status_log_on_change(seeded_client, db):
-    settings.iot_device_key = "test-device-key"
     machine = db.query(Machine).first()
 
     response = seeded_client.post(
         f"/iot/machines/{machine.id}/status",
         json={"is_running": True},
-        headers={"X-Device-Key": "test-device-key"},
+        headers={"X-Device-Key": IOT_KEY},
     )
 
     assert response.status_code == 200
@@ -28,7 +30,6 @@ def test_iot_signal_stores_status_log_on_change(seeded_client, db):
 
 
 def test_iot_signal_stores_status_log_without_status_change(seeded_client, db):
-    settings.iot_device_key = "test-device-key"
     machine = db.query(Machine).first()
     machine.status = "in_use"
     db.commit()
@@ -36,7 +37,7 @@ def test_iot_signal_stores_status_log_without_status_change(seeded_client, db):
     response = seeded_client.post(
         f"/iot/machines/{machine.id}/status",
         json={"is_running": True},
-        headers={"X-Device-Key": "test-device-key"},
+        headers={"X-Device-Key": IOT_KEY},
     )
 
     assert response.status_code == 200

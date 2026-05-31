@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -12,6 +14,8 @@ from app.schemas.machine import MachineAdminItem, MachineStatusUpdate
 from app.services.machine_service import get_dashboard
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 async def _notify_gender(gender: str) -> None:
@@ -81,11 +85,17 @@ async def update_machine_status(
 @router.get("/machines/{machine_id}/power-history")
 def get_power_history(
     machine_id: int,
-    hours: int = Query(default=24, ge=1, le=168),
+    hours: int | None = Query(default=None, ge=1, le=168),
+    date: str | None = Query(default=None, description="YYYY-MM-DD (KST)"),
     _: User = Depends(get_admin_user),
     db: Session = Depends(get_db),
 ):
-    logs = machine_power_log_repo.get_history(db, machine_id, hours=hours)
+    if date:
+        if not _DATE_RE.match(date):
+            raise HTTPException(status_code=422, detail="date 형식: YYYY-MM-DD")
+        logs = machine_power_log_repo.get_by_date(db, machine_id, date)
+    else:
+        logs = machine_power_log_repo.get_history(db, machine_id, hours=hours or 24)
     return [{"timestamp": log.recorded_at.isoformat(), "power_w": log.power_w} for log in logs]
 
 

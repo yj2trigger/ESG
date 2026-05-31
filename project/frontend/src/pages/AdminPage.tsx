@@ -23,10 +23,29 @@ const GENDER_LABEL: Record<string, string> = { male: '남', female: '여' }
 const MANUAL_STATUSES: MachineStatus[] = ['available', 'in_use', 'broken']
 const GRAPH_REFRESH_MS = 60_000
 const STATUS_POLL_MS = 10_000
+const MAX_HISTORY_DAYS = 30
 
 function fmtHHMM(ts: number): string {
   const d = new Date(ts)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** 현재 KST 날짜를 YYYY-MM-DD 문자열로 */
+function todayKST(): string {
+  const kst = new Date(Date.now() + 9 * 3600 * 1000)
+  return kst.toISOString().slice(0, 10)
+}
+
+/** KST 날짜에 days 더함 */
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+/** 30일 전 KST 날짜 */
+function minDateKST(): string {
+  return addDays(todayKST(), -MAX_HISTORY_DAYS)
 }
 
 function PowerGraph({
@@ -37,31 +56,41 @@ function PowerGraph({
   const [data, setData] = useState<PowerDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [lastFetched, setLastFetched] = useState<Date | null>(null)
+  const [selectedDate, setSelectedDate] = useState(todayKST)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const fetchData = () => {
-    adminGetPowerHistory(token, machineId, 24)
+  const today = todayKST()
+  const isToday = selectedDate === today
+
+  const fetchData = (date: string) => {
+    adminGetPowerHistory(token, machineId, { date })
       .then((d) => { setData(d); setLastFetched(new Date()) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }
 
   useEffect(() => {
-    fetchData()
-    intervalRef.current = setInterval(fetchData, GRAPH_REFRESH_MS)
+    setLoading(true)
+    fetchData(selectedDate)
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    // 오늘만 자동 갱신
+    if (selectedDate === todayKST()) {
+      intervalRef.current = setInterval(() => fetchData(selectedDate), GRAPH_REFRESH_MS)
+    }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [machineId, token])
+  }, [machineId, token, selectedDate])
+
+  const prevDay = () => setSelectedDate(d => addDays(d, -1))
+  const nextDay = () => setSelectedDate(d => addDays(d, 1))
 
   const updatedLabel = lastFetched
     ? `${String(lastFetched.getHours()).padStart(2, '0')}:${String(lastFetched.getMinutes()).padStart(2, '0')}:${String(lastFetched.getSeconds()).padStart(2, '0')} 갱신`
     : ''
 
-  if (loading) return <div style={styles.graphMsg}>불러오는 중...</div>
-
-  // 최근 24시간 슬라이딩 윈도우 (자정 넘어가도 데이터 공백 없음)
-  const domainEnd = Date.now()
-  const domainStart = domainEnd - 24 * 60 * 60 * 1000
+  // 선택된 KST 날짜의 00:00~23:59 범위 (ms)
+  const domainStart = new Date(selectedDate + 'T00:00:00+09:00').getTime()
+  const domainEnd   = new Date(selectedDate + 'T23:59:59+09:00').getTime()
 
   const chartData: { ts: number; power: number | null }[] = [
     { ts: domainStart, power: null },
@@ -72,23 +101,45 @@ function PowerGraph({
   const latest = data.length > 0 ? data[data.length - 1].power_w : null
   const isRunning = latest !== null && latest >= startThreshold
 
-  // 3시간마다 tick
   const ticks: number[] = []
-  for (let i = 0; i <= 8; i++) {
-    ticks.push(domainStart + i * 3 * 60 * 60 * 1000)
-  }
+  for (let h = 0; h <= 21; h += 3) ticks.push(domainStart + h * 3600 * 1000)
 
   return (
     <div style={styles.graphContainer}>
+      {/* 날짜 선택 키 */}
+      <div style={styles.dateNav}>
+        <button
+          style={styles.navBtn}
+          onClick={prevDay}
+          disabled={selectedDate <= minDateKST()}
+        >◀</button>
+        <input
+          type="date"
+          value={selectedDate}
+          min={minDateKST()}
+          max={today}
+          onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+          style={styles.dateInput}
+        />
+        <button
+          style={styles.navBtn}
+          onClick={nextDay}
+          disabled={isToday}
+        >▶</button>
+        {isToday && <span style={styles.todayBadge}>오늘</span>}
+      </div>
+
+      {/* 그래프 헤더 */}
       <div style={styles.graphHeader}>
         <span>현재 <strong>{latest !== null ? `${latest.toFixed(1)}W` : '— W'}</strong></span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ color: '#aaa', fontSize: '0.75rem' }}>{updatedLabel}</span>
+          <span style={{ color: '#aaa', fontSize: '0.75rem' }}>{loading ? '로딩 중...' : updatedLabel}</span>
           <span style={{ color: latest === null ? '#888' : isRunning ? '#c33' : '#2a7', fontSize: '0.82rem' }}>
             {latest === null ? '● 데이터 없음' : isRunning ? '● 가동 중' : '● 정지'}
           </span>
         </div>
       </div>
+
       <ResponsiveContainer width="100%" height={160}>
         <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
           <XAxis dataKey="ts" type="number" scale="time" domain={[domainStart, domainEnd]}
@@ -124,23 +175,15 @@ export default function AdminPage() {
 
   const reloadMachines = async () => {
     if (!user) return
-    try {
-      setMachines(await adminGetMachines(user.token))
-    } catch { /* silent */ }
+    try { setMachines(await adminGetMachines(user.token)) } catch { /* silent */ }
   }
 
   useEffect(() => {
-    if (!user || user.role !== 'admin') {
-      navigate('/', { replace: true })
-      return
-    }
+    if (!user || user.role !== 'admin') { navigate('/', { replace: true }); return }
     ;(async () => {
       setLoading(true)
       try {
-        const [ms, cfg] = await Promise.all([
-          adminGetMachines(user.token),
-          adminGetSettings(user.token),
-        ])
+        const [ms, cfg] = await Promise.all([adminGetMachines(user.token), adminGetSettings(user.token)])
         setMachines(ms)
         setStartThreshold(cfg.power_threshold_w)
         setStopThreshold(cfg.stop_threshold_w)
@@ -194,11 +237,10 @@ export default function AdminPage() {
         <span style={styles.title}>관리자 — 세탁기 상태</span>
         <button style={styles.backBtn} onClick={() => navigate('/')}>← 대시보드</button>
       </header>
-
       <main style={styles.main}>
         <div style={styles.thresholdInfo}>
           가동 시작: <strong>{startThreshold}W</strong> · 정지 판단: <strong>{stopThreshold}W</strong>
-          <span style={{ marginLeft: '0.75rem', color: '#bbb' }}>· {STATUS_POLL_MS / 1000}초 주기 갱신 + WS 실시간</span>
+          <span style={{ marginLeft: '0.75rem', color: '#bbb' }}>· {STATUS_POLL_MS / 1000}초 주기 + WS 실시간</span>
         </div>
         {Object.entries(byFloor).sort(([a], [b]) => Number(a) - Number(b)).map(([floor, ms]) => (
           <div key={floor} style={styles.floorSection}>
@@ -225,9 +267,7 @@ export default function AdminPage() {
                         style={{ ...styles.statusBtn, borderColor: STATUS_COLOR[s], color: STATUS_COLOR[s] }}
                         onClick={() => handleStatusChange(m, s)}
                         disabled={updating === m.id}
-                      >
-                        {STATUS_LABEL[s]}
-                      </button>
+                      >{STATUS_LABEL[s]}</button>
                     ))}
                   </div>
                 </div>
@@ -264,6 +304,9 @@ const styles: Record<string, React.CSSProperties> = {
   statusBtn: { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid', borderRadius: '4px', cursor: 'pointer', background: '#fff', minWidth: '4.8rem', textAlign: 'center' },
   graphBtn: { padding: '0.25rem 0.6rem', fontSize: '0.78rem', border: '1px solid #4a90d9', borderRadius: '4px', cursor: 'pointer', background: '#fff', color: '#4a90d9' },
   graphContainer: { background: '#f8f9fa', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.5rem', border: '1px solid #e9ecef' },
+  dateNav: { display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem' },
+  navBtn: { padding: '0.2rem 0.5rem', fontSize: '0.8rem', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer', background: '#fff', lineHeight: 1 },
+  dateInput: { fontSize: '0.82rem', border: '1px solid #ccc', borderRadius: '4px', padding: '0.2rem 0.4rem', cursor: 'pointer', flex: 1, minWidth: 0 },
+  todayBadge: { fontSize: '0.72rem', color: '#2a7', background: '#e8f5e9', padding: '0.1rem 0.4rem', borderRadius: '10px', whiteSpace: 'nowrap' },
   graphHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.85rem' },
-  graphMsg: { padding: '1rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' },
 }

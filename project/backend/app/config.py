@@ -12,13 +12,12 @@ class Settings(BaseSettings):
     gmail_app_password: str = ""
     iot_device_key: str = ""
 
-    smartthings_pat: str = ""
-    # 감지 임계값
-    power_threshold_w: float = 10.0   # 시작: 급수 밸브(15~30W) 캐치
-    stop_threshold_w: float = 5.0    # 정지: 완전 대기(1~5W)만 해당
-    # polling 주기
-    base_poll_sec: float = 120.0        # 일반 기기 polling 간격 (좌)
-    priority_poll_ratio: float = 2.0   # 우선 기기는 일반 대비 이 좌수배 빠르게 (fast = base / ratio)
+    # 감지 임계값 (관리자 표시 + IoT 엔드포인트 로그 활용)
+    power_threshold_w: float = 10.0
+    stop_threshold_w: float = 5.0
+
+    # GitHub Actions 릴레이 폴링 주기 (프론트엔드 표시용)
+    relay_poll_sec: int = 12
 
     model_config = {"env_file": ".env", "extra": "ignore"}  # type: ignore[misc]
 
