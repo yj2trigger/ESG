@@ -13,6 +13,9 @@ jobs:
   relay:
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    concurrency:
+      group: smartthings-relay
+      cancel-in-progress: false
     steps:
       - name: pip 캐시
         uses: actions/cache@v4
