@@ -20,6 +20,13 @@ jobs:
           path: ~/.cache/pip
           key: relay-httpx
 
+      - name: Check secret
+        run: |
+          echo "PAT length: ${#SMARTTHINGS_PAT}"
+          echo "PAT prefix: ${SMARTTHINGS_PAT:0:8}"
+        env:
+          SMARTTHINGS_PAT: ${{ secrets.SMARTTHINGS_PAT }}
+
       - name: SmartThings 폴링 → ESG 전달
         continue-on-error: true
         run: |
