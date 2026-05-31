@@ -1,6 +1,7 @@
 import logging
 import os
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Request
 
 from app.config import settings
@@ -30,6 +31,14 @@ def _device_map() -> dict[str, int]:
 async def smartthings_webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.json()
     lifecycle = body.get("lifecycle")
+
+    if lifecycle == "CONFIRMATION":
+        confirmation_url = body.get("confirmationData", {}).get("confirmationUrl")
+        if confirmation_url:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.get(confirmation_url)
+            logger.info(f"CONFIRMATION 완료: {confirmation_url}")
+        return {}
 
     if lifecycle == "PING":
         return {"pingData": {"challenge": body["pingData"]["challenge"]}}
