@@ -68,7 +68,7 @@ jobs:
                           f"{ESG_URL}/iot/machines/{machine_id}/status",
                           json={"is_running": is_running, "power_w": power_w},
                           headers={"x-device-key": IOT_KEY},
-                          timeout=10.0,
+                          timeout=15.0,
                       )
                       resp.raise_for_status()
                       print(f"[poll {poll}] machine {machine_id}: {power_w:.1f}W is_running={is_running}")
