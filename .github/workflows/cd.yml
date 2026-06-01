@@ -42,13 +42,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: project/frontend/package.json
+          cache-dependency-path: project/backend/frontend/package.json
 
       - name: Install dependencies
-        run: cd project/frontend && npm install
+        run: cd project/backend/frontend && npm install
 
       - name: Run vitest
-        run: cd project/frontend && npm test
+        run: cd project/backend/frontend && npm test
 
   deploy-backend:
     name: Deploy Backend → Fly.io
@@ -93,7 +93,7 @@ jobs:
         run: npm install -g vercel
 
       - name: Deploy frontend
-        run: vercel deploy --prod --token ${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prod --token ${{ secrets.VERCEL_TOKEN }} --cwd project/backend/frontend
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
