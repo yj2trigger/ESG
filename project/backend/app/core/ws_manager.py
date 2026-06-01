@@ -34,6 +34,10 @@ class ConnectionManager:
                 except Exception:
                     self.disconnect(ws, gender)
 
+    async def broadcast_all(self, message: dict) -> None:
+        for gender in self._conns:
+            await self.broadcast(gender, message)
+
     def user_connected(self, user_id: int, gender: str) -> bool:
         return any(uid == user_id for uid, _ in self._conns[gender])
 

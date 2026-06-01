@@ -37,5 +37,8 @@ async def subscribe_devices(
                     },
                 },
             )
-            r.raise_for_status()
-            logger.info(f"구독 등록: device={device_id}")
+            if r.status_code == 409:
+                logger.info(f"구독 이미 존재: device={device_id}")
+            else:
+                r.raise_for_status()
+                logger.info(f"구독 등록: device={device_id}")

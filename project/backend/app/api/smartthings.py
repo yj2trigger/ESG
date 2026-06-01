@@ -31,6 +31,9 @@ def _device_map() -> dict[str, int]:
 async def smartthings_webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.json()
     lifecycle = body.get("lifecycle")
+    import json as _json
+    with open("/tmp/st_last.json", "w") as _f:
+        _json.dump(body, _f, indent=2)
 
     if lifecycle == "CONFIRMATION":
         confirmation_url = body.get("confirmationData", {}).get("confirmationUrl")
@@ -42,6 +45,32 @@ async def smartthings_webhook(request: Request, background_tasks: BackgroundTask
 
     if lifecycle == "PING":
         return {"pingData": {"challenge": body["pingData"]["challenge"]}}
+
+    if lifecycle == "CONFIGURATION":
+        config_data = body.get("configurationData", {})
+        phase = config_data.get("phase")
+        if phase == "INITIALIZE":
+            return {
+                "configurationData": {
+                    "initialize": {
+                        "name": "ESG Laundry Checker",
+                        "description": "세탁기 전력 모니터링",
+                        "id": "init",
+                        "firstPageId": "1",
+                        "permissions": ["r:devices:*", "r:installedapps", "w:installedapps"],
+                    }
+                }
+            }
+        return {
+            "configurationData": {
+                "page": {
+                    "pageId": "1",
+                    "name": "설정",
+                    "complete": True,
+                    "sections": [],
+                }
+            }
+        }
 
     if lifecycle in ("INSTALL", "UPDATE"):
         data = body.get("installData") or body.get("updateData")
@@ -115,6 +144,9 @@ async def _process_event(machine_id: int, is_running: bool, power_w: float) -> N
     db = SessionLocal()
     try:
         machine_power_log_repo.create(db, machine_id, power_w)
+        from app.core.ws_manager import manager as _manager
+        import asyncio as _asyncio
+        _asyncio.ensure_future(_manager.broadcast_all({"type": "power_updated", "machine_id": machine_id, "power_w": power_w}))
         machine = machine_repo.get_by_id(db, machine_id)
         if not machine:
             return

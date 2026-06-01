@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     gmail_user: str = ""
     gmail_app_password: str = ""
     iot_device_key: str = ""
+    st_client_id: str = ""
+    st_client_secret: str = ""
 
     # 감지 임계값 (관리자 표시 + IoT 엔드포인트 로그 활용)
     power_threshold_w: float = 10.0
