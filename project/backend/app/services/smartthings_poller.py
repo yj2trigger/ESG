@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 
 import httpx
 
@@ -14,6 +15,7 @@ _ST_API = "https://api.smartthings.com/v1"
 _ST_AUTH = "https://api.smartthings.com/oauth/token"
 
 POLL_INTERVAL = 12
+_STALE_THRESHOLD_SEC = 300  # 5분 이상 업데이트 없으면 오프라인 처리
 
 
 def _device_map() -> dict[str, int]:
@@ -66,7 +68,16 @@ async def _get_power(device_id: str, token: str) -> float | None:
             if r.status_code == 401:
                 return None  # 토큰 만료 신호
             r.raise_for_status()
-            return float(r.json()["components"]["main"]["powerMeter"]["power"]["value"])
+            power_attr = r.json()["components"]["main"]["powerMeter"]["power"]
+            power = float(power_attr["value"])
+            ts_str = power_attr.get("timestamp")
+            if ts_str:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - ts).total_seconds()
+                if age > _STALE_THRESHOLD_SEC:
+                    logger.info(f"전력 데이터 {age:.0f}초 경과 → 오프라인 처리 (device={device_id})")
+                    return -1.0
+            return power
     except Exception as e:
         logger.error(f"전력 조회 실패 device={device_id}: {e}")
         return None
