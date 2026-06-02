@@ -67,8 +67,10 @@ async def _get_power(device_id: str, token: str) -> float | None | object:
             if h.status_code == 401:
                 return None  # 토큰 만료 신호
             h.raise_for_status()
-            if h.json().get("state") != "ONLINE":
-                logger.debug(f"기기 오프라인, 폴링 건너뜀: {device_id}")
+            health_state = h.json().get("state")
+            if health_state != "ONLINE":
+                logger.info(f"기기 health 상태: {health_state} (device={device_id})")
+            if health_state == "OFFLINE":
                 return _DEVICE_OFFLINE
 
             r = await client.get(f"{_ST_API}/devices/{device_id}/status", headers=headers)
