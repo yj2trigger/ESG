@@ -28,7 +28,10 @@ def _device_map() -> dict[str, int]:
     return result
 
 
-async def _refresh_token(refresh_token: str) -> tuple[str, str] | None:
+_TOKEN_REVOKED = object()  # refresh token이 영구 무효 (invalid_grant)
+
+
+async def _refresh_token(refresh_token: str) -> tuple[str, str] | None | object:
     if not settings.st_client_id or not settings.st_client_secret:
         print("ST_CLIENT_ID/SECRET 미설정 — refresh 불가", flush=True)
         return None
@@ -42,6 +45,9 @@ async def _refresh_token(refresh_token: str) -> tuple[str, str] | None:
                 content=f"grant_type=refresh_token&refresh_token={refresh_token}",
             )
             print(f"refresh 응답: {r.status_code} {r.text[:200]}", flush=True)
+            if r.status_code == 400 and "invalid_grant" in r.text:
+                print("refresh token 영구 무효 (invalid_grant) — SmartThings 재인증 필요", flush=True)
+                return _TOKEN_REVOKED
             r.raise_for_status()
             data = r.json()
             return data["access_token"], data.get("refresh_token", refresh_token)
@@ -102,6 +108,17 @@ async def poll_loop() -> None:
                 if power is None and refresh_tok:
                     logger.info("401 감지 — 토큰 갱신 시도")
                     result = await _refresh_token(refresh_tok)
+                    if result is _TOKEN_REVOKED:
+                        logger.error("SmartThings refresh token 영구 무효 — DB 토큰 초기화, 재인증 필요")
+                        db = SessionLocal()
+                        try:
+                            system_settings_repo.set_str(db, "st_auth_token", "")
+                            system_settings_repo.set_str(db, "st_refresh_token", "")
+                        finally:
+                            db.close()
+                        auth_token = ""
+                        refresh_tok = ""
+                        break  # 이 poll 사이클 devices 루프 탈출
                     if result:
                         auth_token, refresh_tok = result
                         db = SessionLocal()
