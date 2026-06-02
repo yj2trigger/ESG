@@ -50,13 +50,22 @@ async def _refresh_token(refresh_token: str) -> tuple[str, str] | None:
         return None
 
 
-async def _get_power(device_id: str, token: str) -> float | None:
+_DEVICE_OFFLINE = object()
+
+
+async def _get_power(device_id: str, token: str) -> float | None | object:
+    headers = {"Authorization": f"Bearer {token}"}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(
-                f"{_ST_API}/devices/{device_id}/status",
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            h = await client.get(f"{_ST_API}/devices/{device_id}/health", headers=headers)
+            if h.status_code == 401:
+                return None  # 토큰 만료 신호
+            h.raise_for_status()
+            if h.json().get("state", {}).get("status") != "ONLINE":
+                logger.debug(f"기기 오프라인, 폴링 건너뜀: {device_id}")
+                return _DEVICE_OFFLINE
+
+            r = await client.get(f"{_ST_API}/devices/{device_id}/status", headers=headers)
             if r.status_code == 401:
                 return None  # 토큰 만료 신호
             r.raise_for_status()
@@ -107,6 +116,8 @@ async def poll_loop() -> None:
                     continue
 
                 from app.api.smartthings import _last_states, _process_event
+                if power is _DEVICE_OFFLINE:
+                    power = -1.0
                 prev = _last_states.get(device_id)
                 is_running = (
                     power >= settings.stop_threshold_w if prev is True

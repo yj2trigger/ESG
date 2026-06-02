@@ -105,11 +105,12 @@ function PowerGraph({
 
   const chartData: { ts: number; power: number | null }[] = [
     { ts: domainStart, power: null },
-    ...data.map(d => ({ ts: new Date(d.timestamp).getTime(), power: d.power_w })),
+    ...data.map(d => ({ ts: new Date(d.timestamp).getTime(), power: d.power_w < 0 ? 0 : d.power_w })),
     { ts: domainEnd, power: null },
   ]
 
-  const latest = data.length > 0 ? data[data.length - 1].power_w : null
+  const latestRaw = data.length > 0 ? data[data.length - 1].power_w : null
+  const latest = latestRaw !== null ? Math.max(0, latestRaw) : null
   const isRunning = latest !== null && latest >= startThreshold
 
   const ticks: number[] = []
